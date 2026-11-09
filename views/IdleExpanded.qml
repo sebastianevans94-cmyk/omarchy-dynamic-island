@@ -308,20 +308,21 @@ Item {
     width: parent.width - view.pad * 2
     height: island.s(26)
 
-    // Agent meter button: a small readout pill — the ring-wrapped bot
-    // glyph plus the tightest meter's percent as text, so the button says
-    // something even when the arc is near zero. Degrees: glyph dim ghost
-    // when nothing is open; tap flashes the usage card (and walks
-    // providers when several are open).
+    // One template for the whole row: capsule buttons at s(26) with the
+    // same inner padding, the same tint/hover/press curve, words in the
+    // theme font and numbers in the mono — so the agent readout, the quick
+    // settings and the notifications read as one family.
+    // Agent meter button: glyph + the tightest meter's percent, said in
+    // text so the button answers even when the arc is near zero.
     Rectangle {
       id: agentBtn
       visible: island.showOpencode
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
-      width: agentRow.implicitWidth + island.s(14)
+      width: agentRow.implicitWidth + island.s(12)
       height: island.s(26)
       radius: height / 2
-      color: Util.alpha(island.fg, island.agentWarm ? agentMouse.pressed ? 0.30 : 0.14 : 0.05)
+      color: Util.alpha(island.fg, agentMouse.pressed ? 0.30 : (agentMouse.containsMouse ? 0.18 : 0.11))
       scale: agentMouse.pressed ? 0.94 : 1
 
       Behavior on scale { NumberAnimation { duration: 120 } }
@@ -329,7 +330,7 @@ Item {
       Row {
         id: agentRow
         anchors.centerIn: parent
-        spacing: island.s(5)
+        spacing: island.s(4)
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
@@ -368,53 +369,47 @@ Item {
       }
     }
 
-    // Notifications bell: the pending-inbox read. Badge count on the rim,
-    // tap opens the inbox.
+    // Notifications bell: same capsule template, with the pending count
+    // inline in the mono (accent while something waits). Tap opens the
+    // inbox.
     Rectangle {
       id: bellBtn
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      width: island.s(26)
+      width: bellRow.implicitWidth + island.s(12)
       height: island.s(26)
       radius: height / 2
-      color: Util.alpha(island.inbox.length > 0 ? island.accentColor : island.fg,
-                        bellMouse.pressed ? 0.30 : (bellMouse.containsMouse ? 0.18 : 0.11))
+      color: Util.alpha(island.fg, bellMouse.pressed ? 0.30 : (bellMouse.containsMouse ? 0.18 : 0.11))
       scale: bellMouse.pressed ? 0.94 : 1
 
       Behavior on scale { NumberAnimation { duration: 120 } }
       Behavior on color { ColorAnimation { duration: 160 } }
 
-      Text {
+      Row {
+        id: bellRow
         anchors.centerIn: parent
-        text: "󰂚"
-        textFormat: Text.PlainText
-        renderType: Text.NativeRendering
-        font.family: island.fontFamily
-        font.pixelSize: island.f(12)
-        color: island.inbox.length > 0 ? island.accentColor : island.fgDim
-      }
-
-      // The count badge on the rim.
-      Rectangle {
-        visible: island.inbox.length > 0
-        anchors.right: parent.right
-        anchors.rightMargin: island.s(1)
-        anchors.top: parent.top
-        anchors.topMargin: island.s(1)
-        width: island.s(9)
-        height: width
-        radius: width / 2
-        color: island.accentColor
+        spacing: island.s(4)
 
         Text {
-          anchors.centerIn: parent
-          text: island.inbox.length > 9 ? "9+" : String(island.inbox.length)
+          anchors.verticalCenter: parent.verticalCenter
+          text: "󰂚"
           textFormat: Text.PlainText
           renderType: Text.NativeRendering
           font.family: island.fontFamily
-          font.pixelSize: island.f(7)
-          font.weight: Font.DemiBold
-          color: island.bodyAt(0.5)
+          font.pixelSize: island.f(12)
+          color: island.inbox.length > 0 ? island.accentColor : island.fgDim
+        }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: String(island.inbox.length > 9 ? "9+" : island.inbox.length)
+          textFormat: Text.PlainText
+          renderType: Text.NativeRendering
+          font.family: island.fontFamily
+          font.pixelSize: island.f(12)
+          font.bold: true
+          font.features: { "tnum": 1 }
+          color: island.inbox.length > 0 ? island.accentColor : Util.alpha(island.fg, 0.4)
         }
       }
 
@@ -447,7 +442,7 @@ Item {
           id: chip
           required property var modelData
           height: island.s(26)
-          width: chipLabel.implicitWidth + island.s(18)
+          width: chipLabel.implicitWidth + island.s(12)
           radius: height / 2
           color: Util.alpha(chip.modelData.on ? island.accentColor : island.fg,
                             chipMouse.pressed ? 0.30 : (chipMouse.containsMouse ? 0.18 : 0.11))
