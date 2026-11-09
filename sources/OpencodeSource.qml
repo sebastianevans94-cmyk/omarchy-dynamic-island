@@ -86,13 +86,13 @@ Item {
   // providerId -> last good record
   property var shelf: ({})
 
-  // Warmth: agents in use lately. The collectors write every ~15 minutes, so
-  // warmth reads two ways — a record whose usage GREW at its last rewrite,
-  // and, for the local opencode database, opencode-cost's own view of the
-  // session update time. lastWarm keeps epoch stamps; the island drops the
-  // bubble when every stamp has gone cold.
+  // Warmth = PRESENCE: the agent has to be open right now. A running
+  // opencode binary counts for that lane; a window whose title mentions
+  // hermes counts for that one. Every few seconds a single shell probe
+  // re-checks; lastWarm keeps the stamps so a poll gap never flickers.
   property var lastWarm: ({})
-  readonly property int warmMs: 25 * 60 * 1000
+  readonly property int warmMs: 90000
+  property int probeSeconds: 6
 
   function warmIds() {
     var out = []
@@ -105,6 +105,35 @@ Item {
   function noteWarm(providerId) {
     lastWarm[providerId] = Date.now()
     bumpLane()
+  }
+
+  Timer {
+    interval: opencode.probeSeconds * 1000
+    repeat: true
+    running: opencode.on
+    triggeredOnStart: true
+    onTriggered: if (!presenceProbe.running) presenceProbe.running = true
+  }
+
+  Process {
+    id: presenceProbe
+    // Presence, two ways: an opencode TUI alive as a process (the CLI sits
+    // in `…/bin/opencode.exe`, the service runs the same binary with
+    // `serve --service` and is excluded), and a hermes window — the shell
+    // probe uses one bash run so both questions land in a single wake.
+    command: ["bash", "-c",
+      "if ps -eo args | grep -E '(^|/)opencode(\\.exe)?( |$)|[ -]e opencode( |$)' | grep -qv 'serve --service'; then echo opencode; fi; "
+      + "if hyprctl -j clients 2>/dev/null | grep -qi hermes; then echo hermes; fi"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var lines = String(text || "").split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+          var id = lines[i].trim()
+          if (id !== "") opencode.noteWarm(id)
+        }
+      }
+    }
   }
 
   function absorb(providerId, raw) {
@@ -125,11 +154,8 @@ Item {
       return
     }
     var prev = shelf[providerId]
-    // Growth = recent use: today prompts/tokens went up since the last
-    // rewrite of this record.
-    if (prev && (Number(rec.todayPrompts) > Number(prev.todayPrompts || 0)
-        || Number(rec.todayTokensNum) > Number(prev.todayTokensNum || 0)))
-      noteWarm(providerId)
+    // Growth is no longer the warm signal — presence is (the 6-second
+    // probe above). The record itself stays regardless.
     shelf[providerId] = rec
     bumpLane()
   }
@@ -165,37 +191,7 @@ Item {
       status: String(d.usageStatusText || ""),
       limits: limits,
       todayPrompts: today,
-      todayTokens: Model.abbrevTokens(d.todayTotalTokens),
-      todayTokensNum: Number(d.todayTotalTokens || 0)
-    }
-  }
-
-  // The local opencode database knows "now" down to the minute, far
-  // tighter than the fifteen-minute collector cadence, so the local
-  // provider warms up the second a session touches it.
-  readonly property string warmProbeProvider: String(island && island.setting ? island.setting("opencodeProvider", "opencode") : "opencode")
-  Timer {
-    interval: 30000
-    repeat: true
-    running: opencode.on
-    triggeredOnStart: true
-    onTriggered: if (!costProbe.running) costProbe.running = true
-  }
-  Process {
-    id: costProbe
-    command: ["opencode-cost", "current", "--json"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var s = null
-        try {
-          var d = JSON.parse(String(text || "{}"))
-          s = d.session
-        } catch (e) {}
-        if (s && Number(s.time_updated || 0) > 0
-            && Date.now() - Number(s.time_updated) < 150000)
-          opencode.noteWarm(opencode.warmProbeProvider)
-      }
+      todayTokens: Model.abbrevTokens(d.todayTotalTokens)
     }
   }
 
