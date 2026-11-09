@@ -81,7 +81,10 @@ Item {
       anchors.margins: view.island.s(8)
       spacing: view.island.s(2)
 
+      // All three rows center themselves in the card, so the composition
+      // reads as one balanced medallion instead of a left-leaning list.
       Row {
+        anchors.horizontalCenter: parent.horizontalCenter
         WeatherGlyph {
           anchors.verticalCenter: parent.verticalCenter
           size: view.island.f(18)
@@ -136,6 +139,7 @@ Item {
         font.features: { "tnum": 1 }
         color: Util.alpha(view.island.fg, 0.62)
         elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
         width: parent.width
       }
 
@@ -153,6 +157,7 @@ Item {
         font.features: { "tnum": 1 }
         color: Util.alpha(view.island.fg, 0.5)
         elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
         width: parent.width
       }
     }
