@@ -298,58 +298,171 @@ Item {
     }
   }
 
-  // System quick settings, in place of the timer chips: the island's own
-  // do-not-disturb, the omarchy CLI's night light, a walk through the
-  // installed themes, and the lock screen. Each fires its action on tap.
-  Row {
-    anchors.horizontalCenter: parent.horizontalCenter
-    anchors.bottom: parent.bottom
-    anchors.bottomMargin: island.s(16)
-    spacing: island.s(8)
+  // The bottom row, symmetric: the agent meter button on the left edge, the
+  // quick-setting chips centered between, and the notifications bell on the
+  // right edge. (Floating bubbles are retired; everything is a persistent
+  // button on this panel now.)
+  Item {
+    x: view.pad
+    y: island.s(114)
+    width: parent.width - view.pad * 2
+    height: island.s(26)
 
-    Repeater {
-      model: [
-        { label: "DND", glyph: island.dndActive ? "󰂛" : "󰂚", on: island.dndActive },
-        { label: "Night", glyph: "󰖜", on: false },
-        { label: "Theme", glyph: "󰏘", on: false },
-        { label: "Lock", glyph: "󰌾", on: false }
-      ]
+    // Agent meter button: circle with the tightest rate-limit ring around
+    // the bot glyph. Dim when nothing is open; tap flashes the usage card
+    // (and walks providers when several are open).
+    Rectangle {
+      id: agentBtn
+      visible: island.showOpencode
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      width: island.s(26)
+      height: island.s(26)
+      radius: height / 2
+      color: Util.alpha(island.fg, island.agentWarm ? agentMouse.pressed ? 0.30 : 0.16 : 0.05)
+      scale: agentMouse.pressed ? 0.94 : 1
 
+      Behavior on scale { NumberAnimation { duration: 120 } }
+
+      ProgressRing {
+        anchors.fill: parent
+        anchors.margins: island.s(3)
+        visible: island.agentWarm && island.opencodeData && island.opencodeData.ring !== null
+        progress: island.agentWarm && island.opencodeData && island.opencodeData.ring !== null ? island.opencodeData.ring : 0
+        color: island.opencodeRingColor
+        lineWidth: island.s(2)
+      }
+
+      Text {
+        anchors.centerIn: parent
+        text: "󰚩"
+        textFormat: Text.PlainText
+        renderType: Text.NativeRendering
+        font.family: island.fontFamily
+        font.pixelSize: island.f(11)
+        color: island.agentWarm ? island.opencodeRingColor : Util.alpha(island.fg, 0.45)
+      }
+
+      MouseArea {
+        id: agentMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: island.opencodePoke()
+      }
+    }
+
+    // Notifications bell: the pending-inbox read. Badge count on the rim,
+    // tap opens the inbox.
+    Rectangle {
+      id: bellBtn
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: island.s(26)
+      height: island.s(26)
+      radius: height / 2
+      color: Util.alpha(island.inbox.length > 0 ? island.accentColor : island.fg,
+                        bellMouse.pressed ? 0.30 : (bellMouse.containsMouse ? 0.18 : 0.11))
+      scale: bellMouse.pressed ? 0.94 : 1
+
+      Behavior on scale { NumberAnimation { duration: 120 } }
+      Behavior on color { ColorAnimation { duration: 160 } }
+
+      Text {
+        anchors.centerIn: parent
+        text: "󰂚"
+        textFormat: Text.PlainText
+        renderType: Text.NativeRendering
+        font.family: island.fontFamily
+        font.pixelSize: island.f(12)
+        color: island.inbox.length > 0 ? island.accentColor : island.fgDim
+      }
+
+      // The count badge on the rim.
       Rectangle {
-        id: chip
-        required property var modelData
-        height: island.s(28)
-        width: chipLabel.implicitWidth + island.s(20)
-        radius: height / 2
-        color: Util.alpha(chip.modelData.on ? island.accentColor : island.fg,
-                          chipMouse.pressed ? 0.30 : (chipMouse.containsMouse ? 0.18 : 0.11))
-        scale: chipMouse.pressed ? 0.94 : 1
-
-        Behavior on scale { NumberAnimation { duration: 120 } }
-        Behavior on color { ColorAnimation { duration: 120 } }
+        visible: island.inbox.length > 0
+        anchors.right: parent.right
+        anchors.rightMargin: island.s(1)
+        anchors.top: parent.top
+        anchors.topMargin: island.s(1)
+        width: island.s(9)
+        height: width
+        radius: width / 2
+        color: island.accentColor
 
         Text {
-          id: chipLabel
           anchors.centerIn: parent
-          text: chip.modelData.glyph + " " + chip.modelData.label
+          text: island.inbox.length > 9 ? "9+" : String(island.inbox.length)
           textFormat: Text.PlainText
           renderType: Text.NativeRendering
-          font.family: island.textFamily
-          font.pixelSize: island.f(12)
+          font.family: island.fontFamily
+          font.pixelSize: island.f(7)
           font.weight: Font.DemiBold
-          color: chip.modelData.on ? island.accentColor : island.fg
+          color: island.bodyAt(0.5)
         }
+      }
 
-        MouseArea {
-          id: chipMouse
-          anchors.fill: parent
-          hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
-          onClicked: {
-            if (chip.modelData.label === "DND") { island.toggleDnd(); return }
-            if (chip.modelData.label === "Night") { island.runShell(["omarchy", "toggle", "nightlight"]); return }
-            if (chip.modelData.label === "Theme") { island.cycleTheme(); return }
-            island.runShell(["omarchy", "system", "lock"])
+      MouseArea {
+        id: bellMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: island.openInbox()
+      }
+    }
+
+    // Quick settings, centered between the two bookends. Each fires its
+    // action on tap: DND (the island's own daemon state), night light, the
+    // next installed theme, the lock screen.
+    Row {
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: island.s(8)
+
+      Repeater {
+        model: [
+          { label: "DND", glyph: island.dndActive ? "󰂛" : "󰂚", on: island.dndActive },
+          { label: "Night", glyph: "󰖜", on: false },
+          { label: "Theme", glyph: "󰏘", on: false },
+          { label: "Lock", glyph: "󰌾", on: false }
+        ]
+
+        Rectangle {
+          id: chip
+          required property var modelData
+          height: island.s(26)
+          width: chipLabel.implicitWidth + island.s(18)
+          radius: height / 2
+          color: Util.alpha(chip.modelData.on ? island.accentColor : island.fg,
+                            chipMouse.pressed ? 0.30 : (chipMouse.containsMouse ? 0.18 : 0.11))
+          scale: chipMouse.pressed ? 0.94 : 1
+
+          Behavior on scale { NumberAnimation { duration: 120 } }
+          Behavior on color { ColorAnimation { duration: 120 } }
+
+          Text {
+            id: chipLabel
+            anchors.centerIn: parent
+            text: chip.modelData.glyph + " " + chip.modelData.label
+            textFormat: Text.PlainText
+            renderType: Text.NativeRendering
+            font.family: island.textFamily
+            font.pixelSize: island.f(12)
+            font.weight: Font.DemiBold
+            color: chip.modelData.on ? island.accentColor : island.fg
+          }
+
+          MouseArea {
+            id: chipMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              if (chip.modelData.label === "DND") { island.toggleDnd(); return }
+              if (chip.modelData.label === "Night") { island.runShell(["omarchy", "toggle", "nightlight"]); return }
+              if (chip.modelData.label === "Theme") { island.cycleTheme(); return }
+              island.runShell(["omarchy", "system", "lock"])
+            }
           }
         }
       }

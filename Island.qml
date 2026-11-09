@@ -805,10 +805,11 @@ Item {
     }
   }
   property int opencodePokeIdx: 0
-  // The agent lane's card: SELECTED in opencodeData above (the tightest
-  // meter first; the resting face of the pill is never touched).
-  readonly property bool opencodeBubble: showOpencode && opencodeData !== null
-    && !userExpanded && hud === null
+  // The agent's card became a persistent button inside the drop-down's
+  // bottom row (with the notifications bell for company). "opencodeWarm"
+  // just says whether a provider is open; the pixel view lives in
+  // IdleExpanded.qml now.
+  readonly property bool opencodeWarm: showOpencode && opencodeData !== null
   // Tapping walks the providers the lane knows about (opencode first, then
   // hermes, …) — one provider per tap, starting any time.
   function opencodePoke() {
@@ -1263,7 +1264,6 @@ Item {
   // for left) while everything it grows into follows along.
   readonly property int xShift: s(Number(setting("xShift", 0)) || 0)
   function slotSize(name) { return snugSize(name, Model.sizeFor(name, viewCounts, notchSize)) }
-  readonly property bool showBubble: secondary !== "" && !userExpanded && hud === null
 
   function showHud(next) {
     hud = next
@@ -1680,7 +1680,7 @@ Item {
             : null
         },
         opencode: {
-          bubble: root.opencodeBubble,
+          persistent: root.opencodeWarm,
           active: root.opencodeData !== null,
           name: root.opencodeData ? String(root.opencodeData.name) + (root.opencodeData.tier ? " " + root.opencodeData.tier : "") : null,
           limits: root.opencodeData ? root.opencodeData.limits.map(function(l) { return Model.agentLimitTag(l.label, 0) + " " + Math.round(l.pct * 100) + "%" }) : [],
@@ -1700,7 +1700,7 @@ Item {
         geo: {
           win: { x: win.x, y: win.y, w: win.width, h: win.height },
           island: { x: island.x, y: island.y, w: island.width, h: island.height },
-          bubble: { x: bubble.x, y: bubble.y, d: bubble.d, shown: root.showBubble },
+          legacy: null,
           barThickness: root.barThickness,
           melt: root.melt,
           viewSize: root.viewSize
@@ -1764,8 +1764,6 @@ Item {
 
     mask: Region {
       item: island
-      Region { item: bubble; intersection: Intersection.Combine }
-      Region { item: agentBubble; intersection: Intersection.Combine }
     }
 
     Item {
@@ -2102,106 +2100,8 @@ Item {
         }
       }
 
-      // Split island: the second live activity in its own circle.
-      Rectangle {
-        id: bubble
-
-        readonly property real d: root.s(root.melt ? root.barThickness : 32)
-        readonly property real restX: island.x + island.width + root.s(8)
-
-        width: d
-        height: d
-        radius: d / 2
-        y: root.melt ? 0 : (root.notch ? root.s(4) : root.topMargin)
-        x: root.showBubble ? restX : island.x + island.width - d
-        gradient: Gradient {
-          GradientStop { position: 0; color: root.surfaceTop }
-          GradientStop { position: 1; color: root.surfaceBottom }
-        }
-        border.width: 1
-        border.color: root.rim
-        opacity: root.showBubble ? 1 : 0
-        scale: root.showBubble ? 1 : 0.4
-        visible: opacity > 0.01
-        clip: true
-
-        Behavior on x { SpringAnimation { spring: 3.4; damping: 0.3; epsilon: 0.25 } }
-        Behavior on opacity { NumberAnimation { duration: 200 } }
-        Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.OutBack } }
-
-        BubbleContent {
-          anchors.fill: parent
-          island: root
-          kind: root.secondary
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: {
-            if (root.secondary === "inbox") { root.openInbox(); return }
-            root.openFocus = root.secondary
-            root.expand()
-          }
-        }
-      }
-
-      // Agent bubble: the opencode session's resting card, popped off the
-      // pill's LEFT edge — the notifications bell's mirror. A tap flashes a
-      // hover card with the session's tokens; the pill itself stays free.
-      Rectangle {
-        id: agentBubble
-
-        readonly property real d: root.s(root.melt ? root.barThickness : 32)
-        readonly property real restX: island.x - d - root.s(8)
-
-        width: d
-        height: d
-        radius: d / 2
-        y: root.melt ? 0 : root.topMargin
-        x: root.opencodeBubble ? restX : island.x
-        gradient: Gradient {
-          GradientStop { position: 0; color: root.surfaceTop }
-          GradientStop { position: 1; color: root.surfaceBottom }
-        }
-        border.width: 1
-        border.color: root.rim
-        opacity: root.opencodeBubble ? 1 : 0
-        scale: root.opencodeBubble ? 1 : 0.4
-        visible: opacity > 0.01
-        clip: true
-
-        Behavior on x { SpringAnimation { spring: 3.4; damping: 0.3; epsilon: 0.25 } }
-        Behavior on opacity { NumberAnimation { duration: 200 } }
-        Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.OutBack } }
-
-        // The tightest rate limit, as a ring stem the bot glyph sits in —
-        // same ring language the timer bubble speaks.
-        ProgressRing {
-          anchors.fill: parent
-          anchors.margins: root.s(4)
-          visible: root.opencodeData && root.opencodeData.ring !== null
-          progress: root.opencodeData && root.opencodeData.ring !== null ? root.opencodeData.ring : 0
-          color: root.opencodeRingColor
-          lineWidth: root.s(2)
-        }
-
-        Text {
-          anchors.centerIn: parent
-          text: "󰚩"
-          textFormat: Text.PlainText
-          renderType: Text.NativeRendering
-          font.family: island.fontFamily
-          font.pixelSize: root.f(11)
-          color: root.opencodeRingColor
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.opencodePoke()
-        }
-      }
+      // (Floating bubbles retired: the agent meter and the notifications
+      // bell live as persistent buttons inside the drop-down panel now.)
     }
   }
 }
