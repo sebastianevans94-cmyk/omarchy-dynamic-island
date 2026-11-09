@@ -91,6 +91,50 @@ Item {
     maxHeight: island.s(20)
   }
 
+  // The wall clock, so opening the player doesn't take the time away.
+  Text {
+    id: clockLabel
+    anchors.right: parent.right
+    anchors.rightMargin: view.pad + island.s(2)
+    anchors.top: parent.top
+    anchors.topMargin: island.s(16)
+    text: island.timeText
+    textFormat: Text.PlainText
+    renderType: Text.NativeRendering
+    font.family: island.fontFamily
+    font.pixelSize: island.f(11)
+    font.features: { "tnum": 1 }
+    color: island.fgDim
+  }
+
+  // Back: to the drop-down, the way the weather pane's back works.
+  Text {
+    id: playerBack
+    anchors.right: clockLabel.left
+    anchors.rightMargin: island.s(14)
+    anchors.top: parent.top
+    anchors.topMargin: island.s(16)
+    text: "← Back"
+    textFormat: Text.PlainText
+    renderType: Text.NativeRendering
+    font.family: island.textFamily
+    font.pixelSize: island.f(11)
+    color: island.fgDim
+    opacity: playerBackMouse.containsMouse ? 1 : 0.8
+    scale: playerBackMouse.pressed ? 0.94 : 1
+
+    Behavior on scale { NumberAnimation { duration: 120 } }
+
+    MouseArea {
+      id: playerBackMouse
+      anchors.fill: parent
+      anchors.margins: -island.s(6)
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: island.closeMediaPane()
+    }
+  }
+
   Column {
     anchors.left: art.right
     anchors.leftMargin: island.s(14)

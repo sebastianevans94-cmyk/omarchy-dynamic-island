@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Commons
 
 // Now playing, compact: cover art on the leading edge, the equalizer on the
 // trailing edge, and the song scrolling past in between.
@@ -30,11 +31,27 @@ Item {
     maxHeight: island.s(15)
   }
 
+  // The wall clock rides along (theme mono, dimmed), so playing music no
+  // longer takes the time away.
+  Text {
+    id: clock
+    anchors.right: viz.left
+    anchors.rightMargin: island.s(10)
+    anchors.verticalCenter: parent.verticalCenter
+    text: island.timeText
+    textFormat: Text.PlainText
+    renderType: Text.NativeRendering
+    font.family: island.fontFamily
+    font.pixelSize: island.f(12)
+    font.features: { "tnum": 1 }
+    color: island.mediaPlaying ? Util.alpha(island.fg, 0.66) : island.fgDim
+  }
+
   Marquee {
     anchors.left: art.right
     anchors.leftMargin: island.s(8)
-    anchors.right: viz.left
-    anchors.rightMargin: island.s(10)
+    anchors.right: clock.left
+    anchors.rightMargin: island.s(12)
     anchors.verticalCenter: parent.verticalCenter
     text: island.mediaArtist !== "" ? island.mediaTitle + "  ·  " + island.mediaArtist : island.mediaTitle
     color: island.mediaPlaying ? island.fg : island.fgDim

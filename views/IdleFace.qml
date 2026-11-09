@@ -23,6 +23,73 @@ Item {
     pixelSize: island.f(12)
   }
 
+  // Split: every glance at once, no flipping. Time, weather and battery
+  // side by side, each with its own state color. A missing piece (no
+  // weather yet, no battery) drops out instead of reserving space.
+  Row {
+    anchors.centerIn: parent
+    spacing: island.s(14)
+    visible: face.mode === "split"
+
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      text: island.timeText
+      textFormat: Text.PlainText
+      renderType: Text.NativeRendering
+      font.family: island.fontFamily
+      font.pixelSize: island.f(12)
+      font.bold: true
+      font.features: { "tnum": 1 }
+      color: island.fg
+    }
+
+    Text {
+      visible: island.splitWeatherItem || island.splitBatteryItem
+      anchors.verticalCenter: parent.verticalCenter
+      text: "·"
+      textFormat: Text.PlainText
+      renderType: Text.NativeRendering
+      font.family: island.fontFamily
+      font.pixelSize: island.f(12)
+      color: Util.alpha(island.fg, 0.35)
+    }
+
+    Text {
+      visible: island.splitWeatherItem
+      anchors.verticalCenter: parent.verticalCenter
+      text: island.splitWeatherItem ? island.splitWeatherItem.text : ""
+      textFormat: Text.PlainText
+      renderType: Text.NativeRendering
+      font.family: island.fontFamily
+      font.pixelSize: island.f(12)
+      font.bold: true
+      color: island.fg
+    }
+
+    Text {
+      visible: island.splitWeatherItem && island.splitBatteryItem
+      anchors.verticalCenter: parent.verticalCenter
+      text: "·"
+      textFormat: Text.PlainText
+      renderType: Text.NativeRendering
+      font.family: island.fontFamily
+      font.pixelSize: island.f(12)
+      color: Util.alpha(island.fg, 0.35)
+    }
+
+    Text {
+      visible: island.splitBatteryItem
+      anchors.verticalCenter: parent.verticalCenter
+      text: island.splitBatteryItem ? island.splitBatteryItem.text : ""
+      textFormat: Text.PlainText
+      renderType: Text.NativeRendering
+      font.family: island.fontFamily
+      font.pixelSize: island.f(12)
+      font.bold: true
+      color: island.splitBatteryItem && island.splitBatteryItem.color ? island.splitBatteryItem.color : island.fg
+    }
+  }
+
   // A lens: dark glass, a faint ring, and a little reflection.
   Item {
     visible: face.mode === "lens"

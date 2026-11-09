@@ -46,10 +46,19 @@ Item {
   readonly property real scaleFactor: Math.max(0.6, Math.min(2, Number(setting("scale", 1)) || 1))
   readonly property int topMargin: notch ? 0 : s(Number(setting("topMargin", 6)))
   readonly property bool reserveSpace: setting("reserveSpace", true) !== false
+  // Melt into the stock bar: compact pills take the bar strip's own height
+  // (Style.bar.sizeHorizontal) so the island rests inside the drawn bar
+  // instead of claiming a taller strip above it. Expanded views keep their
+  // own heights — they grow out of the bar the way the idle pill sits in it.
+  readonly property bool melt: setting("mergeIntoBar", true) === true
+  readonly property int barThickness: Style.bar.sizeHorizontal
   readonly property string monitorSetting: String(setting("monitor", "primary"))
   readonly property bool expandOnHover: setting("expandOnHover", false) === true
   readonly property string clockFormat: String(setting("clockFormat", "h:mm AP"))
   readonly property bool showVolume: setting("volume", true) !== false
+  readonly property bool showWeather: setting("weather", true) !== false
+  readonly property bool weatherImperial: Model.weatherUnit(
+    String(setting("weatherUnit", "")), Qt.locale().name)
   readonly property bool showBrightness: setting("brightness", true) !== false
   readonly property bool showCharging: setting("charging", true) !== false
   readonly property bool showTrackChange: setting("trackChange", true) !== false
@@ -63,7 +72,7 @@ Item {
   })
   readonly property string idleFace: {
     var f = String(setting("idleFace", "ticker"))
-    return ["ticker", "clock", "lens", "none"].indexOf(f) !== -1 ? f : "ticker"
+    return ["ticker", "clock", "lens", "split", "none"].indexOf(f) !== -1 ? f : "ticker"
   }
   readonly property bool artworkTint: setting("visualizerColor", "accent") === "artwork"
   readonly property bool glowEnabled: setting("glow", false) === true
@@ -97,6 +106,9 @@ Item {
   FileView {
     id: themeColorsFile
     path: Color.currentThemePath + "/colors.toml"
+    // watchChanges so re-applying the same theme (same path, rewritten file)
+    // also refreshes the island's green/orange tones.
+    watchChanges: true
     onLoaded: root.themeColors = Model.parseColors(text())
   }
 
@@ -116,8 +128,11 @@ Item {
   readonly property color outline: blackBackground ? "transparent" : Util.alpha(Color.foreground, 0.1)
   // Obsidian body: lit a touch from above, deepening toward the lip, with a
   // hairline rim. All derived from the theme, all vector (stays crisp).
-  readonly property color surfaceTop: Qt.tint(surface, Util.alpha(Color.foreground, blackBackground ? 0.05 : 0.055))
-  readonly property color surfaceBottom: blackBackground ? "#000000" : Qt.darker(surface, 1.28)
+  // Melted in, the body is one flat surface to sit flush against the bar's
+  // own paint (Baroque's solid fill) instead of shading past it.
+  readonly property color surfaceTop: melt && !blackBackground ? surface
+    : Qt.tint(surface, Util.alpha(Color.foreground, blackBackground ? 0.05 : 0.055))
+  readonly property color surfaceBottom: blackBackground ? "#000000" : (melt ? surface : Qt.darker(surface, 1.28))
   function bodyAt(t) {
     var a = surfaceTop, b = surfaceBottom
     return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1)
@@ -714,6 +729,47 @@ Item {
   Clocks { id: clockSource; island: root }
   Devices { island: root }
   Calendar { id: calendarSource; island: root }
+  WeatherSource {
+    id: weatherFetcher
+    active: root.showWeather
+  }
+  // Views reach the source for status/refresh through this alias.
+  readonly property alias weatherSource: weatherFetcher
+  readonly property var weather: weatherFetcher.weatherData
+  readonly property bool weatherReady: weatherFetcher.ready
+  readonly property bool showStats: setting("stats", true) !== false
+  StatsSource { id: statsSource; on: root.showStats }
+  readonly property var statsData: statsSource.statsData
+  readonly property bool statsReady: statsSource.ready
+  readonly property bool showOpencode: setting("opencodeActivity", true) !== false
+  OpencodeSource {
+    island: root
+    on: root.showOpencode
+  }
+  // The agent's session is a side bubble, not a pill owner: opencode's warm
+  // session hangs off the RESTING pill's left edge (mirroring the split
+  // bubble; the notifications bell hangs on the right) so it can't steal
+  // the time/weather face.
+  property var opencodeData: null       // {title, subtitle, value}
+  readonly property bool opencodeBubble: showOpencode && opencodeData !== null
+    && !userExpanded && hud === null
+  function opencodePoke() {
+    if (!opencodeData) return
+    var line = []
+    var tags = ["5h", "wk", "mo"]
+    for (var i = 0; i < opencodeData.limits.length; ++i)
+      line.push(Model.agentLimitTag(opencodeData.limits[i].label, i) + " " + Math.round(opencodeData.limits[i].pct * 100) + "%")
+    if (opencodeData.todayTokens !== "") line.push("today " + opencodeData.todayTokens)
+    showHud({ layout: "label", icon: "󰚩", label: opencodeData.name + (opencodeData.tier ? " · " + opencodeData.tier : ""),
+      valueText: line.join(" · "), color: opencodeRingColor, duration: 3000 })
+  }
+
+  // Ring/glyph tint: green-light while there's room, tightening gets the
+  // urgent feel without any banner noise.
+  readonly property color opencodeRingColor: {
+    var pct = opencodeData && opencodeData.ring !== null ? opencodeData.ring : 0
+    return pct >= 0.9 ? urgentColor : (pct >= 0.7 ? orangeColor : accentColor)
+  }
   Activities { id: activitySource; island: root }
 
   readonly property var clocks: clockSource
@@ -907,6 +963,20 @@ Item {
     if (hasBattery)
       items.push({ key: "battery", text: Model.batteryIcon(batteryLevel, charging) + " " + Model.percentText(batteryLevel),
                    color: charging ? greenColor : (batteryLevel <= 0.2 ? urgentColor : "") })
+    if (showWeather && weatherReady && weather) {
+      items.push({ key: "weather-now",
+                   text: weather.icon + (" " + Model.weatherTempText(weather.tempC, weather.tempF, weatherImperial)).replace(/^ $/, "") })
+      if (weather.days.length > 0)
+        items.push({ key: "weather-today",
+                     text: weather.days[0].icon + " " + Model.weatherRangeText(weather.days[0].minC, weather.days[0].maxC, weather.days[0].minF, weather.days[0].maxF, weatherImperial) })
+    }
+    if (showStats && statsReady && statsData) {
+      var bits = ""
+      if (statsData.cpuTemp !== null) bits += "󰔐 " + statsData.cpuTemp + "°"
+      if (statsData.gpuTemp !== null) bits += (bits !== "" ? "  " : "") + "󰢮 " + statsData.gpuTemp + "°"
+      if (statsData.gpuBusy !== null) bits += (bits !== "" ? "  " : "") + "󰘚 " + statsData.gpuBusy + "%"
+      if (bits !== "") items.push({ key: "stats", text: bits, color: statsData.cpuTemp >= 85 ? urgentColor : "" })
+    }
     var next = calendar.next
     if (next && next.start - idleClock.date.getTime() < 12 * 3600000 && next.start > idleClock.date.getTime())
       items.push({ key: "event", text: "󰃭 " + Model.untilText(next.start, idleClock.date.getTime()), color: accentColor })
@@ -915,6 +985,29 @@ Item {
     if (notifications.doNotDisturb) items.push({ key: "dnd", text: "󰂛 Silenced", color: orangeColor })
     return items
   }
+
+  // The wall-clock glance the idle ticker always leads with, reused inside
+  // the media views so the time survives while music is playing.
+  readonly property string timeText: idleItems.length > 0 && idleItems[0].key === "time"
+    ? String(idleItems[0].text) : ""
+
+  // The split resting face's pieces (time · weather · battery), pulled from
+  // the same list the ticker builds so formatting stays in one place.
+  readonly property var splitWeatherItem: {
+    for (var i = 0; i < idleItems.length; i++)
+      if (idleItems[i].key === "weather-now") return idleItems[i]
+    return null
+  }
+  readonly property var splitBatteryItem: {
+    for (var i = 0; i < idleItems.length; i++)
+      if (idleItems[i].key === "battery") return idleItems[i]
+    return null
+  }
+  // One string to width-measure the whole split face with (all pieces share
+  // the pill's mono font, so advances add up honestly).
+  readonly property string splitText: timeText
+    + (splitWeatherItem ? "  ·  " + splitWeatherItem.text : "")
+    + (splitBatteryItem ? "  ·  " + splitBatteryItem.text : "")
 
   property int idleIndex: 0
   readonly property var idleItem: idleItems.length > 0 ? idleItems[idleIndex % idleItems.length] : null
@@ -934,6 +1027,32 @@ Item {
     font.pixelSize: root.f(12)
     font.bold: true
     text: root.idleItem ? root.idleItem.text : ""
+  }
+
+  TextMetrics {
+    id: splitMetrics
+    font.family: root.fontFamily
+    font.pixelSize: root.f(12)
+    font.bold: true
+    text: root.splitText
+  }
+
+  // The status HUD sizes itself to its words: the label in the theme text
+  // font, the value in the mono, both at f(13) like HudLabel draws them.
+  TextMetrics {
+    id: hudLabelMetrics
+    font.family: root.textFamily
+    font.pixelSize: root.f(13)
+    font.weight: Font.DemiBold
+    text: hud && hud.layout === "label" ? String(hud.label || "") : ""
+  }
+
+  TextMetrics {
+    id: hudValueMetrics
+    font.family: root.fontFamily
+    font.pixelSize: root.f(13)
+    font.bold: true
+    text: hud && hud.layout === "label" ? String(hud.valueText || "") : ""
   }
 
   // ------------------------------------------------------------------
@@ -997,11 +1116,25 @@ Item {
     activity: scriptActivity,
     calendar: calendarActivity
   })
-  readonly property string primary: activityList.length > 0 ? activityList[0] : ""
-  readonly property string secondary: activityList.length > 1 ? activityList[1] : ""
+  readonly property string primary: {
+    if (activityList.length === 0) return ""
+    // A waiting bell doesn't steal the resting pill: the glance ticker
+    // (which starts with the time) keeps the pill, and the inbox hangs off
+    // it as a bubble instead. See secondary.
+    if (activityList.length === 1 && activityList[0] === "inbox") return ""
+    return activityList[0]
+  }
+  readonly property string secondary: {
+    if (activityList.length > 1) return activityList[1]
+    // The only-live inbox rides as a bubble beside the pill rather than
+    // replacing the time with a bell.
+    if (activityList.length === 1 && activityList[0] === "inbox") return "inbox"
+    return ""
+  }
 
   property bool userExpanded: false
   property bool inboxOpen: false
+  property bool weatherOpen: false
   // Which activity an opened island is about (the bubble's, when the
   // bubble was clicked).
   property string openFocus: ""
@@ -1013,6 +1146,8 @@ Item {
     inboxOpen: inboxOpen,
     outputsOpen: outputsOpen,
     calendarOpen: calendarOpen,
+    weatherOpen: weatherOpen,
+    hasWeather: weatherReady,
     focus: openFocus,
     hasMedia: hasMedia,
     recording: recordingActivity,
@@ -1024,18 +1159,46 @@ Item {
     hovered: hovered
   })
   readonly property var viewCounts: ({ inbox: inbox.length, outputs: audioOutputs.length })
+  // Compact pills take the bar strip's height when melted in. Every other
+  // view keeps its designed geometry.
+  function snugSize(name, size) {
+    if (!melt || !size) return size
+    if (Model.compactViews.indexOf(name) === -1) return size
+    return { w: size.w, h: barThickness, r: barThickness / 2 }
+  }
   readonly property var viewSize: {
-    var v = Model.sizeFor(view, viewCounts, notchSize)
+    var v = snugSize(view, Model.sizeFor(view, viewCounts, notchSize))
     // The resting pill grows to fit what the ticker is showing, so the
     // island breathes a little as the glances change.
     if ((view === "idle" || view === "idle-hover") && (idleFace === "ticker" || idleFace === "clock")) {
       var unit = Style.spacing.scale * scaleFactor
       var needed = Math.ceil(idleMetrics.advanceWidth / unit) + 44 + (view === "idle-hover" ? 12 : 0)
-      return { w: Math.min(260, Math.max(v.w, needed)), h: v.h, r: v.r }
+      // A wider resting band so the pill fills the bar's middle without
+      // crowding the tabs on either end.
+      return { w: Math.min(380, Math.max(v.w, needed)), h: v.h, r: v.r }
+    }
+    if ((view === "idle" || view === "idle-hover") && idleFace === "split") {
+      var unit = Style.spacing.scale * scaleFactor
+      // All pieces at once: measured as one run, with room for the two
+      // separator dots and side padding.
+      var needed = Math.ceil(splitMetrics.advanceWidth / unit) + s(44) + (view === "idle-hover" ? 12 : 0)
+      return { w: Math.min(380, Math.max(v.w, needed)), h: v.h, r: v.r }
+    }
+    if (view === "hud-label") {
+      // Measured to its words: label value and the trailing glyph, so a
+      // full agent card ("5h 11% · wk 8% · mo 4% · today 76.3m") fits
+      // without squeezing the label into nothing. Ceiling the panel, keep
+      // at least the designed width.
+      var unit = Style.spacing.scale * scaleFactor
+      var needed = Math.ceil((hudLabelMetrics.advanceWidth + hudValueMetrics.advanceWidth + s(58)) / unit)
+      return { w: Math.min(500, Math.max(v.w, needed)), h: v.h, r: v.r }
     }
     return v
   }
-  function slotSize(name) { return Model.sizeFor(name, viewCounts, notchSize) }
+  // Optional sideways trim: the pill drifts this many px right (negative
+  // for left) while everything it grows into follows along.
+  readonly property int xShift: s(Number(setting("xShift", 0)) || 0)
+  function slotSize(name) { return snugSize(name, Model.sizeFor(name, viewCounts, notchSize)) }
   readonly property bool showBubble: secondary !== "" && !userExpanded && hud === null
 
   function showHud(next) {
@@ -1062,9 +1225,44 @@ Item {
     outputsOpen = false
     calendarOpen = false
     calendarAdding = false
+    weatherOpen = false
     openFocus = ""
     collapseTimer.stop()
   }
+
+  // The idle-expanded drop-down's rows change what an opened island shows:
+  // the weather tile opens the full weather pane, the now-playing row
+  // switches an opened island over to the player.
+  function openWeather() {
+    if (!userExpanded) expand()
+    weatherOpen = true
+    openFocus = ""
+    collapseTimer.stop()
+  }
+
+  function closeWeather() {
+    weatherOpen = false
+  }
+
+  function openMediaPane() {
+    if (!hasMedia && !mediaActivity) return
+    if (!userExpanded) expand()
+    weatherOpen = false
+    openFocus = "media"
+    collapseTimer.stop()
+  }
+
+  // The player's Back: hand control back to the drop-down rather than
+  // closing the island (the pill click with music playing comes here too).
+  function closeMediaPane() {
+    openFocus = ""
+    collapseTimer.stop()
+  }
+
+  // Live activities for the sources that feed their own (the opencode
+  // agent lane); scripts use the IPC path instead.
+  function activityUpdate(id, payload) { activitySource.update(id, payload) }
+  function activityEnd(id, message) { activitySource.end(id, message) }
 
   function toggleExpanded() {
     if (userExpanded) collapse()
@@ -1097,15 +1295,85 @@ Item {
     }
   }
 
+  // Right button dismisses what it can, without opening anything: the
+  // banner that's up, the transient HUD, or an opened island. Recording
+  // keeps running and play/pause stays on the middle button.
+  function islandDismiss() {
+    if (notification) { notificationDismiss(notification.key); return }
+    if (hud) { hud = null; hudTimer.stop(); return }
+    if (userExpanded) collapse()
+  }
+
+  // ------------------------------------------------------------------
+  // Drop-down chips: system quick settings. Fire-and-collect shell runs
+  // (one shared runner), the island's own DND state, and a theme cycle
+  // that walks the shell's theme directories alphabetically.
+  // ------------------------------------------------------------------
+  property var chipCallback: null
+  function runShell(args, callback) {
+    if (chipRunner.running) return
+    chipCallback = callback || null
+    chipRunner.command = args
+    chipRunner.running = true
+  }
+
+  Process {
+    id: chipRunner
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (root.chipCallback) {
+          var cb = root.chipCallback
+          root.chipCallback = null
+          cb(String(text || ""))
+        }
+      }
+    }
+  }
+
+  readonly property bool dndActive: notifications.doNotDisturb
+  function toggleDnd() {
+    notifications.setDoNotDisturb(!notifications.doNotDisturb)
+  }
+
+  function slugify(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+  }
+  property var themeNames: []
+  function cycleTheme() {
+    var proceed = function() {
+      runShell(["omarchy", "theme", "current"], function(out) {
+        var cur = slugify(out.trim())
+        var idx = -1
+        for (var i = 0; i < themeNames.length; i++)
+          if (slugify(themeNames[i]) === cur) idx = i
+        var next = (idx < 0 ? 0 : (idx + 1) % themeNames.length)
+        var name = themeNames[next]
+        runShell(["omarchy", "theme", "set", name])
+        showHud({ layout: "label", label: name, icon: "󰏘", color: accentColor, duration: 1800 })
+      })
+    }
+    if (themeNames.length === 0) {
+      runShell(["bash", "-c", "find '" + Quickshell.env("HOME") + "/.config/omarchy/themes' -maxdepth 1 -mindepth 1 -type d -printf '%f\\n' | sort"], function(out) {
+        themeNames = out.split("\n").filter(function(s) { return s.trim() !== "" })
+        proceed()
+      })
+      return
+    }
+    proceed()
+  }
   function islandClicked(button) {
+    if (button === Qt.RightButton) { islandDismiss(); return }
     if (button === Qt.MiddleButton) {
       if (hasMedia) mediaToggle()
       return
     }
-    // The bell owns the pill when nothing else is live: open the inbox.
-    if (!userExpanded && primary === "inbox") {
-      openInbox()
-      return
+    // Music owns the click: tapping the pill while something plays opens
+    // the player directly, and on the opened drop-down a click on the free
+    // space does the same (the chips and the now-playing row keep their own
+    // clicks; they sit above this one).
+    if (mediaActivity && hasMedia) {
+      if (!userExpanded || view === "idle-expanded") { openMediaPane(); return }
     }
     toggleExpanded()
   }
@@ -1249,6 +1517,14 @@ Item {
     target: "dynamic-island"
 
     function expand(): string { root.expand(); return "ok" }
+
+    // The weather pane and the player pane of the drop-down, reachable from
+    // keybinds and scripts the same way the calendar is.
+    function weather(): string { root.openWeather(); return "ok" }
+    function weatherClose(): string { root.closeWeather(); return "ok" }
+    function media(): string { root.openMediaPane(); return "ok" }
+    function mediaClose(): string { root.closeMediaPane(); return "ok" }
+    function agent(): string { root.opencodePoke(); return "ok" }
     // on | off | toggle: keep a strip free for the island, or let windows
     // fill the top of the screen under it.
     function reserveSpace(mode: string): string {
@@ -1330,7 +1606,36 @@ Item {
           inbox: root.inbox.length,
           dnd: notifications.doNotDisturb
         },
-        screen: win.screen ? win.screen.name : null
+        weather: {
+          open: root.weatherOpen,
+          ready: root.weatherReady,
+          label: root.weather ? String(root.weather.label) : null,
+          temp: root.weather ? Model.weatherTempText(root.weather.tempC, root.weather.tempF, root.weatherImperial) : null,
+          today: root.weather && root.weather.days.length > 0
+            ? Model.weatherRangeText(root.weather.days[0].minC, root.weather.days[0].maxC, root.weather.days[0].minF, root.weather.days[0].maxF, root.weatherImperial)
+            : null
+        },
+        opencode: {
+          bubble: root.opencodeBubble,
+          active: root.opencodeData !== null,
+          name: root.opencodeData ? String(root.opencodeData.name) + (root.opencodeData.tier ? " " + root.opencodeData.tier : "") : null,
+          limits: root.opencodeData ? root.opencodeData.limits.map(function(l) { return Model.agentLimitTag(l.label, 0) + " " + Math.round(l.pct * 100) + "%" }) : [],
+          todayTokens: root.opencodeData ? String(root.opencodeData.todayTokens) : null
+        },
+        ticker: {
+          face: root.idleFace,
+          index: root.idleIndex,
+          items: root.idleItems.map(function(i) { return i.text })
+        },
+        screen: win.screen ? win.screen.name : null,
+        geo: {
+          win: { x: win.x, y: win.y, w: win.width, h: win.height },
+          island: { x: island.x, y: island.y, w: island.width, h: island.height },
+          bubble: { x: bubble.x, y: bubble.y, d: bubble.d, shown: root.showBubble },
+          barThickness: root.barThickness,
+          melt: root.melt,
+          viewSize: root.viewSize
+        }
       })
     }
     function ping(): string { return "ok" }
@@ -1377,7 +1682,9 @@ Item {
     // takes focus from the app you're in.
     WlrLayershell.keyboardFocus: root.calendarTyping ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: root.reserveSpace ? ExclusionMode.Normal : ExclusionMode.Ignore
-    exclusiveZone: root.reserveSpace ? root.s(32) + root.topMargin : 0
+    // -1 is the layer-shell "outside every reservation": with the bar owning
+    // the top edge, a plain 0 still parks this surface below the bar.
+    exclusiveZone: root.reserveSpace ? root.s(32) + topMargin : -1
 
     // Esc always hands the keyboard back, wherever focus is inside.
     Shortcut {
@@ -1389,6 +1696,7 @@ Item {
     mask: Region {
       item: island
       Region { item: bubble; intersection: Intersection.Combine }
+      Region { item: agentBubble; intersection: Intersection.Combine }
     }
 
     Item {
@@ -1523,7 +1831,7 @@ Item {
 
         // Snapped to device pixels: at fractional scaling an edge between
         // pixels is drawn as a soft, lighter line.
-        x: root.snap((stage.width - width) / 2)
+        x: root.snap((stage.width - width) / 2 + root.xShift)
         y: root.snap(root.topMargin)
         width: root.snap(Math.max(0, stage.w))
         height: root.snap(Math.max(0, stage.h))
@@ -1712,6 +2020,12 @@ Item {
           }
 
           ViewSlot {
+            active: root.showing("weather-expanded")
+            width: root.s(root.slotSize("weather-expanded").w); height: root.s(root.slotSize("weather-expanded").h)
+            WeatherView { anchors.fill: parent; island: root }
+          }
+
+          ViewSlot {
             active: root.showing("idle-expanded")
             width: root.s(root.slotSize("idle-expanded").w); height: root.s(root.slotSize("idle-expanded").h)
             IdleExpanded { anchors.fill: parent; island: root }
@@ -1723,13 +2037,13 @@ Item {
       Rectangle {
         id: bubble
 
-        readonly property real d: root.s(32)
+        readonly property real d: root.s(root.melt ? root.barThickness : 32)
         readonly property real restX: island.x + island.width + root.s(8)
 
         width: d
         height: d
         radius: d / 2
-        y: root.notch ? root.s(4) : root.topMargin
+        y: root.melt ? 0 : (root.notch ? root.s(4) : root.topMargin)
         x: root.showBubble ? restX : island.x + island.width - d
         gradient: Gradient {
           GradientStop { position: 0; color: root.surfaceTop }
@@ -1760,6 +2074,63 @@ Item {
             root.openFocus = root.secondary
             root.expand()
           }
+        }
+      }
+
+      // Agent bubble: the opencode session's resting card, popped off the
+      // pill's LEFT edge — the notifications bell's mirror. A tap flashes a
+      // hover card with the session's tokens; the pill itself stays free.
+      Rectangle {
+        id: agentBubble
+
+        readonly property real d: root.s(root.melt ? root.barThickness : 32)
+        readonly property real restX: island.x - d - root.s(8)
+
+        width: d
+        height: d
+        radius: d / 2
+        y: root.melt ? 0 : root.topMargin
+        x: root.opencodeBubble ? restX : island.x
+        gradient: Gradient {
+          GradientStop { position: 0; color: root.surfaceTop }
+          GradientStop { position: 1; color: root.surfaceBottom }
+        }
+        border.width: 1
+        border.color: root.rim
+        opacity: root.opencodeBubble ? 1 : 0
+        scale: root.opencodeBubble ? 1 : 0.4
+        visible: opacity > 0.01
+        clip: true
+
+        Behavior on x { SpringAnimation { spring: 3.4; damping: 0.3; epsilon: 0.25 } }
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.OutBack } }
+
+        // The tightest rate limit, as a ring stem the bot glyph sits in —
+        // same ring language the timer bubble speaks.
+        ProgressRing {
+          anchors.fill: parent
+          anchors.margins: root.s(4)
+          visible: root.opencodeData && root.opencodeData.ring !== null
+          progress: root.opencodeData && root.opencodeData.ring !== null ? root.opencodeData.ring : 0
+          color: root.opencodeRingColor
+          lineWidth: root.s(2)
+        }
+
+        Text {
+          anchors.centerIn: parent
+          text: "󰚩"
+          textFormat: Text.PlainText
+          renderType: Text.NativeRendering
+          font.family: island.fontFamily
+          font.pixelSize: root.f(11)
+          color: root.opencodeRingColor
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.opencodePoke()
         }
       }
     }

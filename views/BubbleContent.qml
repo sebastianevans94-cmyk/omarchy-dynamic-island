@@ -26,6 +26,7 @@ Item {
     color: island.urgentColor
   }
 
+  // Inbox: a bell, with a count badge when something is waiting.
   Text {
     anchors.centerIn: parent
     visible: view.kind === "inbox"
@@ -35,6 +36,29 @@ Item {
     font.family: island.fontFamily
     font.pixelSize: island.f(15)
     color: island.accentColor
+  }
+
+  Rectangle {
+    anchors.right: parent.right
+    anchors.rightMargin: island.s(1)
+    anchors.top: parent.top
+    anchors.topMargin: island.s(1)
+    visible: view.kind === "inbox" && island.inbox.length > 0
+    width: island.s(9)
+    height: width
+    radius: width / 2
+    color: island.accentColor
+
+    Text {
+      anchors.centerIn: parent
+      text: island.inbox.length > 9 ? "9+" : String(island.inbox.length)
+      textFormat: Text.PlainText
+      renderType: Text.NativeRendering
+      font.family: island.fontFamily
+      font.pixelSize: island.f(7)
+      font.weight: Font.DemiBold
+      color: island.bodyAt(0.5)
+    }
   }
 
   // Timer / activity: their ring, so progress is readable even here.

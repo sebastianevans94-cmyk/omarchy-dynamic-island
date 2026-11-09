@@ -7,8 +7,8 @@
 // these; `r` is the corner radius, which for the compact views is half the
 // height so the shape stays a true capsule.
 var sizes = {
-  "idle":          { w: 126, h: 32, r: 16 },
-  "idle-hover":    { w: 138, h: 34, r: 17 },
+  "idle":          { w: 210, h: 32, r: 16 },
+  "idle-hover":    { w: 222, h: 34, r: 17 },
   "hidden":        { w: 0,   h: 32, r: 16 },
   "media":         { w: 300, h: 32, r: 16 },
   "recording":     { w: 232, h: 32, r: 16 },
@@ -21,6 +21,7 @@ var sizes = {
   "recording-expanded": { w: 392, h: 76, r: 34 },
   "recording-media-expanded": { w: 404, h: 145, r: 40 },
   "idle-expanded": { w: 424, h: 150, r: 40 },
+  "weather-expanded": { w: 424, h: 232, r: 40 },
   "notification":  { w: 404, h: 78, r: 34 },
   "inbox":         { w: 200, h: 32, r: 16 },
   "timer":         { w: 236, h: 32, r: 16 },
@@ -51,6 +52,12 @@ function viewFor(state) {
   if (state.userExpanded && state.inboxOpen) return "inbox-expanded"
   if (state.userExpanded && state.outputsOpen) return "outputs-expanded"
   if (state.userExpanded && state.calendarOpen) return "calendar-expanded"
+  // The weather pane rides below recording; recording still takes the top
+  // of an opened island so it can be stopped from there.
+  if (state.userExpanded && state.weatherOpen && !state.recording) return "weather-expanded"
+  // Music owns the opened island only when it was opened for the music:
+  // the drop-down's now-playing row sets focus explicitly. Plain pill
+  // clicks keep showing the basic page, whose row leads to the player.
   if (state.userExpanded) {
     // Recording takes the top of an opened island so it can be stopped from
     // there; music, if any, rides along underneath.
@@ -61,8 +68,12 @@ function viewFor(state) {
     if (focus === "timer" || focus === "stopwatch") return "clock-expanded"
     if (focus === "activity") return "activity-expanded"
     if (focus === "calendar") return "calendar-expanded"
-    if (focus === "media" && state.hasMedia) return "media-expanded"
-    return state.hasMedia && focus !== "calendar" ? "media-expanded" : "idle-expanded"
+    // Explicitly chosen music only: state.focus is the click's answer;
+    // primary is just what happens to be live right now.
+    if (state.focus === "media" && state.hasMedia) return "media-expanded"
+    // Everything else — including with music playing — stays on the basic
+    // page, whose now-playing row hands over to the player pane.
+    return "idle-expanded"
   }
   if (state.hud && state.hud.layout === "progress") return "hud-progress"
   if (state.notification) return state.notificationActions ? "notification-actions" : "notification"
@@ -686,4 +697,300 @@ function parseKeybind(text) {
     mask |= bit
   }
   return { mask: mask, key: parts[parts.length - 1] }
+}
+
+// ---------------------------------------------------------------------
+// Weather. Shaped once here so the island pill, the idle-expanded
+// drop-down and the weather pane all read from one object. Sources are
+// the same two the shell's weather panel uses: open-meteo when the
+// place is known (fast) and wttr.in otherwise (IP auto-detect, and the
+// place it names seeds open-meteo for later refreshes).
+// ---------------------------------------------------------------------
+
+function weatherImperial(localeName) {
+  var name = String(localeName || "").replace(".", "_")
+  return /^en[_-]US([_.-]|$)/.test(name) || /^en[_-]LR([_.-]|$)/.test(name) || /^my([_.-]|$)/.test(name)
+}
+
+function weatherUnit(unitSetting, localeName) {
+  var u = String(unitSetting || "").toLowerCase()
+  if (u === "imperial") return true
+  if (u === "metric") return false
+  return weatherImperial(localeName)
+}
+
+function weatherRound(v) {
+  var n = parseFloat(String(v))
+  return isNaN(n) ? "" : String(Math.round(n))
+}
+
+function weatherTempText(cTemp, fTemp, imperial) {
+  var v = weatherRound(imperial ? fTemp : cTemp)
+  return v === "" ? "" : v + "°" + (imperial ? "F" : "C")
+}
+
+function weatherRangeText(minC, maxC, minF, maxF, imperial) {
+  var lo = weatherRound(imperial ? minF : minC), hi = weatherRound(imperial ? maxF : maxC)
+  return lo === "" || hi === "" ? "" : lo + "° / " + hi + "°"
+}
+
+// Ticker/drop-down glyphs. Same mapping as the shell weather panel
+// (nerd-font) so island and panel never disagree about the sky.
+function weatherIconForCode(code, night) {
+  var c = parseInt(String(code || "0"), 10)
+  if (c === 113) return night ? "\ue32b" : "\ue30d"
+  if (c === 116) return night ? "\ue32e" : "\ue302"
+  if (c === 119 || c === 122) return "\ue33d"
+  if (c === 143 || c === 248 || c === 260) return night ? "\ue346" : "\ue313"
+  if (c === 176 || c === 263 || c === 353) return night ? "\ue333" : "\ue308"
+  if (c === 179 || c === 227 || c === 230 || c === 323 || c === 326 || c === 368) return night ? "\ue327" : "\ue30a"
+  if (c === 182 || c === 185 || c === 281 || c === 284 || c === 311 || c === 314 ||
+      c === 317 || c === 320 || c === 350 || c === 362 || c === 365 || c === 374 || c === 377) return "\ue3ad"
+  if (c === 200 || c === 386 || c === 389 || c === 392 || c === 395) return "\ue31d"
+  if (c === 266 || c === 293 || c === 296 || c === 299 || c === 302 || c === 305 || c === 308 || c === 356 || c === 359) return "\ue318"
+  if (c === 329 || c === 332 || c === 335 || c === 338 || c === 371) return "\ue31a"
+  return "\ue33d"
+}
+
+function weatherIconForOpenMeteoCode(openMeteoCode, night) {
+  var c = parseInt(String(openMeteoCode || "0"), 10)
+  if (c === 0) return weatherIconForCode(113, night)
+  if (c === 1 || c === 2) return weatherIconForCode(116, night)
+  if (c === 3) return weatherIconForCode(119, night)
+  if (c === 45 || c === 48) return weatherIconForCode(143, night)
+  if (c === 51 || c === 53 || c === 55 || c === 56 || c === 57 || c === 61) return weatherIconForCode(266, night)
+  if (c === 63 || c === 65 || c === 66 || c === 67 || c === 80 || c === 81 || c === 82) return weatherIconForCode(308, night)
+  if (c === 71 || c === 73 || c === 75 || c === 77 || c === 85 || c === 86) return weatherIconForCode(338, night)
+  if (c === 95 || c === 96 || c === 99) return weatherIconForCode(389, night)
+  return weatherIconForCode(119, night)
+}
+
+function weatherHourlyIcon(hourly) {
+  var best = null, bestDist = 9999
+  for (var i = 0; i < (hourly || []).length; ++i) {
+    var t = parseInt(String((hourly[i] && hourly[i].time) || "0"), 10)
+    if (isNaN(t)) continue
+    var dist = Math.abs(t - 1200)
+    if (dist < bestDist) { bestDist = dist; best = hourly[i] }
+  }
+  return best ? weatherIconForCode(best.weatherCode, false) : ""
+}
+
+function weatherDayName(dateString) {
+  var d = new Date(String(dateString || "") + "T12:00:00")
+  if (isNaN(d.getTime())) return ""
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]
+}
+
+// One normalized read: the panel's wttr.in j1 answer (current + up to
+// 3 daily entries), or open-meteo's combined current+daily answer.
+function weatherFromWttr(report, labelOverride) {
+  if (!report || !report.current_condition || !report.current_condition.length) return null
+  var cc = report.current_condition[0]
+  var num = function(v) { var n = parseFloat(String(v)); return isNaN(n) ? null : String(Math.round(n)) }
+  var hours = parseInt(String(cc.observation_time ? "" : "0"), 10) // placeholder no-op
+  var isDay = true
+  var out = {
+    label: labelOverride || "",
+    icon: weatherIconForCode(cc.weatherCode, false) || "",
+    kind: weatherKindForCode(cc.weatherCode, false),
+    tempC: num(cc.temp_C), tempF: num(cc.temp_F),
+    feelsC: num(cc.FeelsLikeC), feelsF: num(cc.FeelsLikeF),
+    windKmph: num(cc.windspeedKmph) ? cc.windspeedKmph : "",
+    windMph: num(cc.windspeedMiles) ? cc.windspeedMiles : "",
+    humidity: num(cc.humidity),
+    isDay: isDay,
+    days: []
+  }
+  var days = report.weather || []
+  for (var i = 0; i < days.length && out.days.length < 3; ++i) {
+    var wd = days[i]
+    if (!wd) continue
+    out.days.push({
+      name: i === 0 ? "Today" : weatherDayName(wd.date),
+      icon: weatherHourlyIcon(wd.hourly),
+      maxC: num(wd.maxtempC), minC: num(wd.mintempC),
+      maxF: num(wd.maxtempF), minF: num(wd.mintempF)
+    })
+  }
+  var area = report.nearest_area && report.nearest_area[0] ? report.nearest_area[0] : null
+  if (area) {
+    var place = area.areaName && area.areaName.length ? String(area.areaName[0].value) : ""
+    if (!out.label && place) out.label = place
+  }
+  return out
+}
+
+function weatherPad2(n) { return (n < 10 ? "0" : "") + n }
+
+// The next ~12 hours of precipitation probability, local hour first, for
+// the mini bar chart in the weather pane. Open-meteo only (wttr has no
+// hourly probability feed).
+function weatherRainUpNext(hourly, now) {
+  if (!hourly || !hourly.time || !hourly.precipitation_probability) return []
+  var d = new Date(now)
+  var stamp = d.getFullYear() + "-" + weatherPad2(d.getMonth() + 1) + "-"
+    + weatherPad2(d.getDate()) + "T" + weatherPad2(d.getHours())
+  var out = []
+  for (var i = 0; i < hourly.time.length && out.length < 12; ++i) {
+    var t = String(hourly.time[i] || "")
+    if (t < stamp) continue
+    var pct = parseInt(String(hourly.precipitation_probability[i]) || "", 10)
+    out.push({ time: t.slice(11, 16), pct: isNaN(pct) ? 0 : pct })
+  }
+  return out
+}
+
+function weatherHourMinute(iso) {
+  var s = String(iso || "")
+  return s.length >= 16 ? s.slice(11, 16) : ""
+}
+
+function weatherFromOpenMeteo(report, labelOverride) {
+  var current = report && report.current ? report.current : null
+  var daily = report && report.daily ? report.daily : null
+  if (!current || current.temperature_2m === undefined) return null
+  var isDay = Number(current.is_day) !== 0
+  var out = {
+    label: labelOverride || "",
+    icon: weatherIconForOpenMeteoCode(current.weather_code, isDay) || "",
+    kind: weatherKindForOpenMeteoCode(current.weather_code, isDay),
+    tempC: weatherRound(current.temperature_2m), tempF: weatherRound(current.temperature_2m * 9 / 5 + 32),
+    feelsC: weatherRound(current.apparent_temperature),
+    feelsF: weatherRound(current.apparent_temperature * 9 / 5 + 32),
+    windKmph: weatherRound(current.wind_speed_10m), windMph: weatherRound(current.wind_speed_10m * 0.621371),
+    humidity: weatherRound(current.relative_humidity_2m),
+    isDay: isDay,
+    days: []
+  }
+  if (daily && daily.time) {
+    for (var i = 0; i < daily.time.length && out.days.length < 3; ++i) {
+      out.days.push({
+        name: i === 0 ? "Today" : weatherDayName(daily.time[i]),
+        icon: weatherIconForOpenMeteoCode(daily.weather_code ? daily.weather_code[i] : 0, isDay),
+        maxC: weatherRound(daily.temperature_2m_max ? daily.temperature_2m_max[i] : ""),
+        minC: weatherRound(daily.temperature_2m_min ? daily.temperature_2m_min[i] : ""),
+        maxF: weatherRound(daily.temperature_2m_max ? weatherRound(daily.temperature_2m_max[i]) * 9 / 5 + 32 : ""),
+        minF: weatherRound(daily.temperature_2m_min ? weatherRound(daily.temperature_2m_min[i]) * 9 / 5 + 32 : "")
+      })
+    }
+  }
+  out.rain = weatherRainUpNext(report.hourly, Date.now())
+  out.sunrise = daily && daily.sunrise && daily.sunrise.length ? weatherHourMinute(daily.sunrise[0]) : ""
+  out.sunset = daily && daily.sunset && daily.sunset.length ? weatherHourMinute(daily.sunset[0]) : ""
+  return out
+}
+
+// The weather location file (owned by omarchy-weather-location): blank or
+// unparseable means the place is auto-detected.
+function weatherParseLocation(raw) {
+  var unset = { name: "", latitude: null, longitude: null }
+  try {
+    var d = JSON.parse(String(raw || ""))
+    if (!d || typeof d !== "object") return unset
+    var latitude = parseFloat(d.latitude)
+    var longitude = parseFloat(d.longitude)
+    return {
+      name: typeof d.name === "string" ? d.name.replace(/^\s+|\s+$/g, "") : "",
+      latitude: !isNaN(latitude) ? latitude : null,
+      longitude: !isNaN(longitude) ? longitude : null
+    }
+  } catch (e) { return unset }
+}
+
+// 758150 -> "758k"; 43.3m-style inputs: "4.1m" keeps the pill value short.
+function abbrevTokens(n) {
+  var v = Number(n)
+  if (!isFinite(v) || v <= 0) return "0"
+  if (v >= 1000000) return (v / 1000000).toFixed(1) + "m"
+  if (v >= 1000) return Math.round(v / 1000) + "k"
+  return String(v)
+}
+
+// sysfs hwmon dump -> {cpuTemp, gpuTemp, gpuBusy} in C and percent. Chips
+// carry their name on the same line; k10temp is the CPU, amdgpu the GPU.
+// The busiest amdgpu card wins. Desktops with no GPU lines just drop them.
+function hardwareStats(raw) {
+  var out = { cpuTemp: null, gpuTemp: null, gpuBusy: null }
+  var lines = String(raw || "").split("\n")
+  for (var i = 0; i < lines.length; ++i) {
+    var line = lines[i].toLowerCase()
+    var m = line.match(/(\d+)\s*$/)
+    if (!m) continue
+    var n = parseInt(m[1], 10)
+    if (isNaN(n)) continue
+    if (line.indexOf("k10temp") !== -1 || line.indexOf("coretemp") !== -1 || line.indexOf("cpu") !== -1) {
+      var t = n > 2000 ? Math.round(n / 1000) : n
+      if (t > 0 && t < 130) out.cpuTemp = t
+    } else if (line.indexOf("amdgpu") !== -1 || line.indexOf("gpu") !== -1) {
+      var gt = n > 2000 ? Math.round(n / 1000) : n
+      if (gt > 0 && gt < 130) out.gpuTemp = Math.max(out.gpuTemp !== null ? out.gpuTemp : 0, gt)
+    } else if (line.indexOf("amdgpu") === -1 && line.indexOf("k10temp") === -1 && n <= 100) {
+      // gpu_busy_percent lines are bare percents
+      if (out.cpuTemp === null || out.gpuTemp === null) out.gpuBusy = Math.max(out.gpuBusy !== null ? out.gpuBusy : 0, n)
+    }
+  }
+  // The bare-percent block: lines that are just numbers with no chip name.
+  var busies = []
+  for (var j = 0; j < lines.length; ++j) {
+    var l = lines[j].trim()
+    if (/^\d+\s*$/.test(l)) busies.push(parseInt(l, 10))
+  }
+  if (busies.length > 0) out.gpuBusy = Math.max.apply(null, busies)
+  return out
+}
+
+// "Rolling (5h)" -> "5h", "Weekly (7-day)" -> "wk", "Monthly" -> "mo".
+function agentLimitTag(label, index) {
+  var s = String(label || "").toLowerCase()
+  if (s.indexOf("5h") !== -1) return "5h"
+  if (s.indexOf("week") !== -1 || s.indexOf("7") !== -1) return "wk"
+  if (s.indexOf("month") !== -1) return "mo"
+  return String(label).slice(0, 6) || "#" + (index + 1)
+}
+
+// The sky's motion class for WeatherGlyph: what the text glyph becomes
+// when it wants to move. Mirrors the icon tables above.
+function weatherKindForCode(code, night) {
+  var c = parseInt(String(code || "0"), 10)
+  if (c === 113) return night ? "night" : "sun"
+  if (c === 116) return "cloud"
+  if (c === 119 || c === 122) return "cloud"
+  if (c === 143 || c === 248 || c === 260) return "fog"
+  if (c === 176 || c === 263 || c === 353) return "rain"
+  if (c === 179 || c === 227 || c === 230 || c === 323 || c === 326 || c === 368) return "snow"
+  if (c === 182 || c === 185 || c === 281 || c === 284 || c === 311 || c === 314 ||
+      c === 317 || c === 320 || c === 350 || c === 362 || c === 365 || c === 374 || c === 377) return "rain"
+  if (c === 200 || c === 386 || c === 389 || c === 392 || c === 395) return "thunder"
+  if (c === 266 || c === 293 || c === 296 || c === 299 || c === 302 || c === 305 || c === 308 || c === 356 || c === 359) return "rain"
+  if (c === 329 || c === 332 || c === 335 || c === 338 || c === 371) return "snow"
+  return "cloud"
+}
+
+function weatherKindForOpenMeteoCode(openMeteoCode, night) {
+  var c = parseInt(String(openMeteoCode || "0"), 10)
+  if (c === 0) return weatherKindForCode(113, night)
+  if (c === 1 || c === 2) return weatherKindForCode(116, night)
+  if (c === 3) return weatherKindForCode(119, night)
+  if (c === 45 || c === 48) return weatherKindForCode(143, night)
+  if (c === 51 || c === 53 || c === 55 || c === 56 || c === 57 || c === 61) return weatherKindForCode(266, night)
+  if (c === 63 || c === 65 || c === 66 || c === 67 || c === 80 || c === 81 || c === 82) return weatherKindForCode(308, night)
+  if (c === 71 || c === 73 || c === 75 || c === 77 || c === 85 || c === 86) return weatherKindForCode(338, night)
+  if (c === 95 || c === 96 || c === 99) return weatherKindForCode(389, night)
+  return "cloud"
+}
+
+// One word for the sky, for the drop-down card: plain English for the
+// motion class.
+function weatherConditionName(kind) {
+  switch (String(kind || "")) {
+    case "sun": return "Clear"
+    case "night": return "Clear night"
+    case "cloud": return "Cloudy"
+    case "fog": return "Fog"
+    case "rain": return "Rain"
+    case "snow": return "Snow"
+    case "thunder": return "Storm"
+    default: return ""
+  }
 }

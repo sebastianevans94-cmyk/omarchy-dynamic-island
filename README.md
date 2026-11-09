@@ -1,5 +1,11 @@
 # Dynamic Island for Omarchy
 
+> **Fork 1.4.0** — melted into the bar, split resting face, weather
+> card + pane (rain bars, sun times), agent limit-meters bubble (reads the
+> agents-usage records), quick-settings chips, media controls, stats
+> glance. Everything below is the upstream readme with fork behavior woven
+> in; the deltas are itemized in `FORK.md`.
+
 An Apple-style Dynamic Island for [Omarchy](https://omarchy.org). A pill sits at
 the top of the screen and springs open into live activities: now playing,
 screen recording, microphone in use, volume, brightness, charging, and custom
@@ -31,13 +37,16 @@ backlight, and `gpu-screen-recorder` for recording.
 | Volume / brightness | The island stretches into a slim level bar |
 | Plugged in / low battery | `Charging 80%` or `Low Battery 10%` |
 | Track change | A short now-playing card |
-| Click (idle) | The time, date, next meeting and battery, plus one-tap 5, 15 and 25 minute timers and a stopwatch |
-| Click | Expands into a full player (seekable progress, prev/play/next). While recording it shows the recording with a Stop button, with the player underneath if music is on. With nothing live it shows the time, date and battery |
+| Click (idle) | The time, the date and battery on the left, the weather at the far right — plain info: one tap each row. The bottom row is quick settings: DND, night light, next installed theme, and the lock screen |
+| Weather invited | In the resting flip: the current weather and today's high/low. On the opened drop-down: a weather tile that opens the full pane (current temp, feels-like, wind, humidity, three-day forecast, with a Back button) |
+| Click | Expands into a full player (seekable progress, prev/play/next). While recording it shows the recording with a Stop button, with the player underneath if music is on. With nothing live it shows the time, date and battery. The drop-down now also carries a weather tile and a now-playing row while music plays; the weather tile opens the weather pane, the now-playing row jumps to the player |
 
 Mouse:
 
-* **Left click**: expand or collapse. The island also closes when the pointer leaves it.
+* **Left click**: while music plays, the pill opens the player and a free-area click on the drop-down does the same. Without music it expands or collapses. The island also closes when the pointer leaves it.
+* **Chips on the drop-down**: the weather tile opens the weather pane (its Back returns to the drop-down), the now-playing row opens the player (its Back likewise), the date opens the calendar, timers start instantly.
 * **Middle click**: play/pause.
+* **Right click**: dismiss — clears the banner or toast that's up, or closes an opened island. Recording keeps running.
 * **Scroll**: change the volume.
 
 | | | |
@@ -124,10 +133,12 @@ apply as soon as you save the file.
 | `style` | `"notch"` | `"notch"` is attached to the top edge like a MacBook notch; `"island"` floats just below it |
 | `background` | `"theme"` | `"theme"` uses the theme background; `"black"` is true black like the hardware island |
 | `idle` | `"pill"` | `"hidden"` removes the pill when nothing is live |
-| `idleFace` | `"ticker"` | What the resting pill shows: `"ticker"`, `"clock"`, `"lens"` (a camera lens, like the hardware island) or `"none"` |
+| `idleFace` | `"ticker"` | What the resting pill shows: `"split"` (time · weather · battery, all at once), `"ticker"`, `"clock"`, `"lens"` (a camera lens, like the hardware island) or `"none"` |
 | `scale` | `1` | Size multiplier (0.6–2) |
 | `topMargin` | `6` | Gap above the island in `island` style |
-| `reserveSpace` | `true` | Keep a strip free across the top for the island. `false` lets windows fill the top of the screen and the island/notch sits over them, so no empty band is left beside it |
+| `xShift` | `0` | Sideways nudge for the whole island in px (`40` drifts it right, `-40` left); the pill and everything it grows into move together |
+| `mergeIntoBar` | `true` | When the [Omarchy bar](Bar) has the top strip, compact pills take the bar's own height (`Style.bar.sizeHorizontal`), sit flush inside it and paint one flat surface, so the island reads as the bar's middle tab — `false` gives the pill its taller floating look. Set `reserveSpace` false yourself once, or let `omarchy-shell dynamic-island reserveSpace` do it |
+| `reserveSpace` | `true` | Keep a strip free across the top for the island. `false` lets windows fill the top of the screen and the island/notch sits over them, so no empty band is left beside it. With `mergeIntoBar`, set this to `false` so the island lives in the bar rather than above it |
 | `keybind` | `"SUPER + ALT + I"` | Key that toggles `reserveSpace`. The island adds it to `~/.config/hypr/bindings.lua` (skipped if the key is already taken) and removes it on uninstall; `false` for none |
 | `monitor` | `"primary"` | `"primary"`, `"focused"`, or a monitor name like `"eDP-1"` |
 | `layer` | `"top"` | `"overlay"` keeps it above fullscreen windows |
@@ -144,6 +155,11 @@ apply as soon as you save the file.
 | `timerSound` | `true` | Play the alarm sound when a timer ends |
 | `bluetooth`, `camera`, `calendar` | `true` | Turn those activities off |
 | `notifications` | `true` | Show notifications in the island (replaces Omarchy's notification popups) |
+| `weather` | `true` | Weather glances in the idle ticker (current + today's range), a weather tile on the opened drop-down, and a full weather pane (current temp, feels-like, wind, humidity, a 12-hour rain bar chart and sun times from open-meteo, three-day forecast, Back button). Shares the shell weather panel's location file (`~/.local/state/omarchy/settings/weather.json`) and refreshes every 15 minutes |
+| `stats` | `true` | A `sysfs` glance in the idle ticker: CPU/GPU temperature and the busiest GPU's busy-percent |
+| `opencodeActivity` | `true` | Shows the agent agent's **rate-limit meters as a small bubble off the resting pill's left edge** (the notifications bell's mirror): a thin ring of the tightest meter (rolling/weekly/monthly accent, orange past 70%, red past 90%) with the bot glyph in it, reading the same `~/.local/state/omarchy/agents/usage/<provider>.json` records the shell's agent-usage collectors maintain. Tap flashes a card: `5h 11% · wk 8% · mo 4% · today 75.4m`. The pill keeps its own resting face |
+| `opencodeProvider` | `"opencode"` | Which usage record the bubble reads (`opencode`, `opencode-go`, `claude`, …) — matches the collector ids other plugins write |
+| `weatherUnit` | `""` | `""` follows the locale; `"metric"` or `"imperial"` to pin either |
 | `inbox` | `true` | Show the bell for notifications waiting in the inbox |
 | `osd` | `true` | Show Omarchy's on-screen popups (volume, brightness, mic, …) in the island instead of at the bottom |
 | `volume`, `brightness`, `charging`, `trackChange`, `recording`, `mic` | `true` | Turn individual activities off |
@@ -222,8 +238,12 @@ default on Asahi Linux), the island simply sits in the black band there.
 ```bash
 omarchy-shell dynamic-island toast "Build finished" "0 errors" "󰄬" green
 omarchy-shell dynamic-island toggle        # bind it to a key in hyprland.conf
+omarchy-shell dynamic-island weather       # open the weather pane
+omarchy-shell dynamic-island weatherClose  # back to the drop-down
+omarchy-shell dynamic-island media         # jump from the drop-down to the player
+omarchy-shell dynamic-island agent                      # the agent card, like tapping the bubble
 omarchy-shell dynamic-island reserveSpace toggle   # on | off | toggle: windows below the island or under it
-omarchy-shell dynamic-island state         # JSON snapshot
+omarchy-shell dynamic-island state         # JSON snapshot (includes weather + ticker glances)
 omarchy-shell dynamic-island demo media    # preview: media paused split recording mic recording-expanded
                                            # volume brightness charging lowbattery notification
                                            # notification-actions inbox

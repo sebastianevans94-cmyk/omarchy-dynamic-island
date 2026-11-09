@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "omarchy-dynamic-island",
   "name": "Dynamic Island",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "author": "Arjun010011",
   "license": "MIT",
-  "description": "An Apple-style Dynamic Island for Omarchy: music, notifications, timers, calendar, system popups and live activities in a notch at the top of the screen, in your theme's colors.",
+  "description": "Dynamic Island (cbass fork of Arjun010011's island, 1.4.0): melts into the Omarchy bar, split resting face, weather card + Rain/Sun pane, agent meters bubble, quick-settings chips, media controls, theme-colored everything. See FORK.md.",
   "kinds": [
     "panel"
   ],
