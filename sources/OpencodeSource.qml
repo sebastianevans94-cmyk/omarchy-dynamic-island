@@ -117,13 +117,21 @@ Item {
 
   Process {
     id: presenceProbe
-    // Presence, two ways: an opencode TUI alive as a process (the CLI sits
-    // in `…/bin/opencode.exe`, the service runs the same binary with
-    // `serve --service` and is excluded), and a hermes window — the shell
-    // probe uses one bash run so both questions land in a single wake.
+    // Presence = a WINDOW open with the TUI alive in it. Both halves are
+    // checked (the compositor's client list for the window, the process
+    // list for a live TUI binary that isn't the tailnet's `serve`), so a
+    // lingering terminal title or an orphaned TUI can't fake presence
+    // after opencode is closed. Hermes is answered by its window only.
     command: ["bash", "-c",
-      "if ps -eo args | grep -E '(^|/)opencode(\\.exe)?( |$)|[ -]e opencode( |$)' | grep -qv 'serve --service'; then echo opencode; fi; "
-      + "if hyprctl -j clients 2>/dev/null | grep -qi hermes; then echo hermes; fi"]
+      "hyprctl -j clients 2>/dev/null | python3 -c \"\n"
+      + "import json, sys, re, subprocess\n"
+      + "try:\n    cs = json.load(sys.stdin)\nexcept Exception:\n    cs = []\n"
+      + "if not isinstance(cs, list): cs = []\n"
+      + "t = ' '.join((c.get('title') or '') + ' ' + (c.get('class') or '') for c in cs)\n"
+      + "if 'hermes' in t.lower(): print('hermes')\n"
+      + "ps = subprocess.run(['ps', '-eo', 'args'], capture_output=True).stdout.decode()\n"
+      + "tui = [l for l in ps.splitlines() if re.search(r'(^|/)opencode(\\.exe)?$', l.strip())]\n"
+      + "if re.search(r'\\bOC[ |]', t) and tui: print('opencode')\n\""]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
