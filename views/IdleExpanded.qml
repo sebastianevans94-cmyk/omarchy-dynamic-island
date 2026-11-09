@@ -308,39 +308,55 @@ Item {
     width: parent.width - view.pad * 2
     height: island.s(26)
 
-    // Agent meter button: circle with the tightest rate-limit ring around
-    // the bot glyph. Dim when nothing is open; tap flashes the usage card
-    // (and walks providers when several are open).
+    // Agent meter button: a small readout pill — the ring-wrapped bot
+    // glyph plus the tightest meter's percent as text, so the button says
+    // something even when the arc is near zero. Degrees: glyph dim ghost
+    // when nothing is open; tap flashes the usage card (and walks
+    // providers when several are open).
     Rectangle {
       id: agentBtn
       visible: island.showOpencode
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
-      width: island.s(26)
+      width: agentRow.implicitWidth + island.s(14)
       height: island.s(26)
       radius: height / 2
-      color: Util.alpha(island.fg, island.agentWarm ? agentMouse.pressed ? 0.30 : 0.16 : 0.05)
+      color: Util.alpha(island.fg, island.agentWarm ? agentMouse.pressed ? 0.30 : 0.14 : 0.05)
       scale: agentMouse.pressed ? 0.94 : 1
 
       Behavior on scale { NumberAnimation { duration: 120 } }
 
-      ProgressRing {
-        anchors.fill: parent
-        anchors.margins: island.s(3)
-        visible: island.agentWarm && island.opencodeData && island.opencodeData.ring !== null
-        progress: island.agentWarm && island.opencodeData && island.opencodeData.ring !== null ? island.opencodeData.ring : 0
-        color: island.opencodeRingColor
-        lineWidth: island.s(2)
-      }
-
-      Text {
+      Row {
+        id: agentRow
         anchors.centerIn: parent
-        text: "󰚩"
-        textFormat: Text.PlainText
-        renderType: Text.NativeRendering
-        font.family: island.fontFamily
-        font.pixelSize: island.f(11)
-        color: island.agentWarm ? island.opencodeRingColor : Util.alpha(island.fg, 0.45)
+        spacing: island.s(5)
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "󰚩"
+          textFormat: Text.PlainText
+          renderType: Text.NativeRendering
+          font.family: island.fontFamily
+          font.pixelSize: island.f(12)
+          color: island.agentWarm ? island.opencodeRingColor : Util.alpha(island.fg, 0.4)
+        }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: island.agentWarm && island.opencodeData
+            ? (island.opencodeData.limits.length > 0
+              ? Math.round(island.opencodeData.limits[0].pct * 100) + "%"
+              : "·")
+            : "—"
+          textFormat: Text.PlainText
+          renderType: Text.NativeRendering
+          font.family: island.fontFamily
+          font.pixelSize: island.f(12)
+          font.bold: true
+          font.features: { "tnum": 1 }
+          color: island.agentWarm && island.opencodeData && island.opencodeData.limits.length > 0
+            ? island.opencodeRingColor : Util.alpha(island.fg, 0.4)
+        }
       }
 
       MouseArea {

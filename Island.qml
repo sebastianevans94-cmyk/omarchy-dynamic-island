@@ -810,10 +810,18 @@ Item {
   // just says whether a provider is open; the pixel view lives in
   // IdleExpanded.qml now.
   readonly property bool opencodeWarm: showOpencode && opencodeData !== null
+  readonly property bool agentWarm: opencodeWarm
   // Tapping walks the providers the lane knows about (opencode first, then
   // hermes, …) — one provider per tap, starting any time.
   function opencodePoke() {
-    if (!opencodeData) return
+    if (!opencodeData) {
+      // The point of the ghost state: the button answers even when the
+      // lane is empty, instead of doing nothing.
+      showHud({ layout: "label", icon: "󰚩", label: "No agent open",
+        valueText: "opencode or a hermes window isn't running",
+        color: fg, duration: 2400 })
+      return
+    }
     var opts = opencodeData.providers
     if (opts.length === 0) return
     var sel = opts[opencodePokeIdx % opts.length]
