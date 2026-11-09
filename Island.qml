@@ -82,6 +82,7 @@ Item {
   property bool configLoaded: false
 
   FileView {
+    id: configView
     path: Quickshell.env("HOME") + "/.config/omarchy/shell.json"
     watchChanges: true
     onFileChanged: reload()
@@ -540,8 +541,24 @@ Item {
   // entry to shell.updateEntryInline, which replaces it.
   function saveSettings(changes) {
     if (!shell || typeof shell.updateEntryInline !== "function") return false
+    // Merge onto a FRESH read of shell.json, never the cached snapshot:
+    // other shells and plugins rewrite this file constantly, and a stale
+    // snapshot once errored every key this fork adds back off the entry.
+    var fresh = {}
+    try {
+      fresh = Model.entryFor(Model.parseConfig(configView.text()), root.pluginId)
+    } catch (e) {
+      // Mid-rewrite: fall back to the watched copy rather than losing
+      // unknown keys entirely.
+      for (var k in settings) if (k !== "id") fresh[k] = settings[k]
+      for (var c in changes) fresh[c] = changes[c]
+      return shell.updateEntryInline(pluginId, fresh)
+    }
     var next = {}
-    for (var k in settings) if (k !== "id") next[k] = settings[k]
+    for (var k in fresh) if (k !== "id") next[k] = fresh[k]
+    // Settings the entry never carried (some batteries ship only some) —
+    // keep what came in through the watched file, then the changes.
+    for (var k in settings) if (k !== "id" && typeof next[k] === "undefined") next[k] = settings[k]
     for (var c in changes) next[c] = changes[c]
     return shell.updateEntryInline(pluginId, next)
   }
@@ -743,25 +760,66 @@ Item {
   readonly property bool statsReady: statsSource.ready
   readonly property bool showOpencode: setting("opencodeActivity", true) !== false
   OpencodeSource {
+    id: agentLane
     island: root
     on: root.showOpencode
   }
-  // The agent's session is a side bubble, not a pill owner: opencode's warm
-  // session hangs off the RESTING pill's left edge (mirroring the split
-  // bubble; the notifications bell hangs on the right) so it can't steal
-  // the time/weather face.
-  property var opencodeData: null       // {title, subtitle, value}
+  property int agentLaneRev: 0
+  Connections { target: agentLane; function onRevisionChanged() { agentLaneRev++ } }
+  // The lane's records, shaped: providers with meters lead, sorted by the
+  // tightest meter first; meterless-but-active providers (hermes, local)
+  // trail so the tap-cycle still reaches them.
+  readonly property var opencodeData: {
+    agentLaneRev
+    var shelf = agentLane.shelf
+    var list = []
+    for (var id in shelf) {
+      var r = shelf[id]
+      r = Object.assign({}, r, { providerId: String(id) })
+      list.push(r)
+    }
+    if (list.length === 0) return null
+    list.sort(function(a, b) {
+      var aM = a.limits.length > 0 ? a.limits[0].pct : -1
+      var bM = b.limits.length > 0 ? b.limits[0].pct : -1
+      if (bM !== aM) return bM - aM
+      return String(a.name).localeCompare(String(b.name))
+    })
+    var sel = list[0]
+    return {
+      name: sel.name,
+      tier: sel.tier,
+      status: sel.status,
+      limits: sel.limits,
+      todayPrompts: sel.todayPrompts,
+      todayTokens: sel.todayTokens,
+      ring: sel.limits.length > 0 ? sel.limits[0].pct : null,
+      resetsAt: sel.limits.length > 0 ? sel.limits[0].resetsAt : "",
+      providers: list
+    }
+  }
+  property int opencodePokeIdx: 0
+  // The agent lane's card: SELECTED in opencodeData above (the tightest
+  // meter first; the resting face of the pill is never touched).
   readonly property bool opencodeBubble: showOpencode && opencodeData !== null
     && !userExpanded && hud === null
+  // Tapping walks the providers the lane knows about (opencode first, then
+  // hermes, …) — one provider per tap, starting any time.
   function opencodePoke() {
     if (!opencodeData) return
+    var opts = opencodeData.providers
+    if (opts.length === 0) return
+    var sel = opts[opencodePokeIdx % opts.length]
+    opencodePokeIdx = (opencodePokeIdx + 1) % opts.length
     var line = []
-    var tags = ["5h", "wk", "mo"]
-    for (var i = 0; i < opencodeData.limits.length; ++i)
-      line.push(Model.agentLimitTag(opencodeData.limits[i].label, i) + " " + Math.round(opencodeData.limits[i].pct * 100) + "%")
-    if (opencodeData.todayTokens !== "") line.push("today " + opencodeData.todayTokens)
-    showHud({ layout: "label", icon: "󰚩", label: opencodeData.name + (opencodeData.tier ? " · " + opencodeData.tier : ""),
-      valueText: line.join(" · "), color: opencodeRingColor, duration: 3000 })
+    for (var i = 0; i < sel.limits.length; ++i)
+      line.push(Model.agentLimitTag(sel.limits[i].label, i) + " " + Math.round(sel.limits[i].pct * 100) + "%")
+    if (sel.todayTokens !== "" && sel.todayTokens !== "0") line.push("today " + sel.todayTokens)
+    else if (sel.todayPrompts > 0) line.push("today " + sel.todayPrompts + " prompts")
+    var label = String(sel.name || sel.providerId) + (sel.tier ? " · " + sel.tier : "")
+    showHud({ layout: "label", icon: "󰚩", label: label,
+      valueText: line.join(" · ") || (sel.status || "no meters this provider"),
+      color: opencodeRingColor, duration: 3000 })
   }
 
   // Ring/glyph tint: green-light while there's room, tightening gets the
@@ -1620,7 +1678,12 @@ Item {
           active: root.opencodeData !== null,
           name: root.opencodeData ? String(root.opencodeData.name) + (root.opencodeData.tier ? " " + root.opencodeData.tier : "") : null,
           limits: root.opencodeData ? root.opencodeData.limits.map(function(l) { return Model.agentLimitTag(l.label, 0) + " " + Math.round(l.pct * 100) + "%" }) : [],
-          todayTokens: root.opencodeData ? String(root.opencodeData.todayTokens) : null
+          todayTokens: root.opencodeData ? String(root.opencodeData.todayTokens) : null,
+          debug: {
+            watching: agentLane.providerIds.length,
+            shelf: Object.keys(agentLane.shelf).join(","),
+            targeted: agentLane.shelf ? Object.keys(agentLane.shelf).length : 0
+          }
         },
         ticker: {
           face: root.idleFace,

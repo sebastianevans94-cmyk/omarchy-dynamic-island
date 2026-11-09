@@ -4,52 +4,121 @@ import Quickshell.Io
 import "../IslandModel.js" as Model
 
 // The agent lane, sourced from the same records the shell's agent-usage
-// collectors maintain (`omarchy-opencode-go` and friends write one JSON per
-// provider under the agents usage directory every fifteen minutes). The
-// island only reads: the bubble shows the rate-limit meters studio the
-// provider authenticated against and today's token total, without opening
-// or collecting anything on its own.
+// collectors maintain (one JSON per provider under the agents usage
+// directory, refreshed every fifteen minutes — or sooner on their own
+// retry cadence). The island only reads; when a provider has no record,
+// or none has authenticated meters, the bubble simply rests.
 //
-// When no collector wrote a record for the chosen provider yet — plugin off,
-// never logged in — the bubble simply stays retired.
+// Robust by design:
+//   * every *.json in the directory is watched, not one file — opencode,
+//     hermes, local, whatever their collectors publish;
+//   * a bad or half-written read keeps the provider's LAST GOOD record
+//     (sticky across the collector's rewrite races — this is what kept the
+//     bubble from vanishing every time opencode closed and reopened);
+//   * a provider disappears from the data only when its file asks for it
+//     for good (record rewrites itself unusable, or is deleted).
 Item {
   id: opencode
+
   property var island: null
   property bool on: true
-  // Which provider record the lane reads from the usage directory. Agents
-  // are identified by their collector id: "opencode", "opencode-go",
-  // "claude", … Change it in the island's settings if you run another one.
-  readonly property string usageProvider: String(island && island.setting ? island.setting("opencodeProvider", "opencode") : "opencode")
   readonly property string usageDir: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
     + "/omarchy/agents/usage"
 
-  onOnChanged: if (on) recordFile.reload()
+  // ---
+  // Discovery: the record ids on disk, rescanned now and then. Cheap even
+  // at this cadence, because find is the only subprocess.
+  // ---
+  property var providerIds: []
 
-  // A one-shot delayed reload, like the weather source: the first read can
-  // race shell startup and miss a completed record.
-  Timer { interval: 2500; running: true; onTriggered: recordFile.reload() }
+  Timer {
+    interval: 12000
+    repeat: true
+    running: opencode.on
+    triggeredOnStart: true
+    onTriggered: if (!listProc.running) listProc.running = true
+  }
 
-  FileView {
-    id: recordFile
-    path: opencode.usageDir + "/" + opencode.usageProvider + ".json"
-    watchChanges: true
-    printErrors: false
-    onLoaded: opencode.apply(JSON.parse(text()))
-    onFileChanged: recordFile.reload()
-    onLoadFailed: {
-      // No record (no collector, nothing logged in): the bubble rests.
-      if (opencode.island) opencode.island.opencodeData = null
+  Process {
+    id: listProc
+    command: ["/usr/bin/find", opencode.usageDir, "-maxdepth", "1", "-name", "*.json", "-printf", "%f\n"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var ids = []
+        var lines = String(text || "").split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+          var n = lines[i].trim()
+          if (n.slice(-5) === ".json") ids.push(n.slice(0, -5))
+        }
+        ids.sort()
+        // Same list, same objects: an identical assignment would tear down
+        // every FileView for nothing.
+        if (JSON.stringify(ids) === JSON.stringify(opencode.providerIds)) return
+        opencode.providerIds = ids
+      }
     }
   }
 
-  function apply(rawJson) {
-    if (!island) return
+  Instantiator {
+    id: watchers
+    model: opencode.providerIds
+
+    FileView {
+      required property string modelData
+      readonly property string providerId: modelData
+      path: opencode.usageDir + "/" + providerId + ".json"
+      watchChanges: true
+      printErrors: false
+
+      onLoaded: opencode.absorb(providerId, text())
+      onFileChanged: if (opencode.on) this.reload()
+      // A failed read (file rewritten mid-flight, briefly missing) leaves
+      // the provider's last GOOD record standing, rather than blanking the
+      // lane. One more is never forced: the next write heals it.
+      onLoadFailed: { /* sticky */ }
+    }
+
+    onObjectAdded: opencode.recount()
+    onObjectRemoved: opencode.recount()
+  }
+
+  // providerId -> last good record
+  property var shelf: ({})
+
+  function absorb(providerId, raw) {
     var d = null
-    try { d = rawJson } catch (e) {}
-    if (!d || d.ready !== true) {
-      island.opencodeData = null
+    try { d = JSON.parse(String(raw || "")) } catch (e) {
+      // The collector is mid-write: keep the shelf as it stands.
       return
     }
+    var rec = shapeRecord(d)
+    if (rec === null) {
+      // The record rewrote itself unusable, or is genuinely logged out:
+      // letting it go is the point of this branch (sticky, not a fork
+      // file). Everything else keeps its shelf.
+      if (shelf[providerId] !== undefined) {
+        delete shelf[providerId]
+        bumpLane()
+      }
+      return
+    }
+    shelf[providerId] = rec
+    bumpLane()
+  }
+
+  function recount() {
+    // A watcher left (file deleted): its shelf entry can't refresh anymore.
+    for (var id in shelf)
+      if (providerIds.indexOf(id) === -1) { delete shelf[id]; bumpLane(); return }
+    bumpLane()
+  }
+
+  function shapeRecord(d) {
+    if (!d || typeof d !== "object") return null
+    var hasUse = (d.limits || []).length > 0 || Number(d.todayPrompts || 0) > 0
+    if (!(d.ready === true || d.ready === undefined) && !hasUse) return null
+    if (String(d.ready || "") === "" && !hasUse) return null
     var limits = []
     var ls = d.limits || []
     for (var i = 0; i < ls.length && limits.length < 3; ++i) {
@@ -61,17 +130,20 @@ Item {
         resetsAt: String(l.resetsAt || "")
       })
     }
-    island.opencodeData = {
-      name: String(d.name || island.usageProvider),
+    var today = Number(d.todayPrompts || 0)
+    if (limits.length === 0 && today === 0) return null
+    return {
+      name: String(d.name || ""),
       tier: String(d.tierLabel || ""),
       status: String(d.usageStatusText || ""),
       limits: limits,
-      // The lane's ring reads the tightest live meter (they arrive from the
-      // widest scope down: rolling, weekly, monthly).
-      ring: limits.length > 0 ? limits[0].pct : null,
-      resetsAt: limits.length > 0 ? limits[0].resetsAt : "",
-      todayPrompts: Number(d.todayPrompts || 0),
+      todayPrompts: today,
       todayTokens: Model.abbrevTokens(d.todayTotalTokens)
     }
   }
+
+  property int revision: 0
+  function bumpLane() { revision++ }
+
+  function recountShelf() { return revision }
 }
