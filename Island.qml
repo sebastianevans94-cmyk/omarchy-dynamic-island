@@ -772,8 +772,14 @@ Item {
   readonly property var opencodeData: {
     agentLaneRev
     var shelf = agentLane.shelf
+    var warm = {}
+    var warmList = agentLane.warmIds()
+    for (var wi = 0; wi < warmList.length; ++wi) warm[warmList[wi]] = true
     var list = []
     for (var id in shelf) {
+      // Only agents in use lately hold the bubble: a meter sitting idle
+      // today says nothing worth waking the pill's face for.
+      if (!warm[id]) continue
       var r = shelf[id]
       r = Object.assign({}, r, { providerId: String(id) })
       list.push(r)
