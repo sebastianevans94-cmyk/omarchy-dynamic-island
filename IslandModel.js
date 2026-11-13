@@ -20,7 +20,7 @@ var sizes = {
   "media-expanded": { w: 404, h: 186, r: 42 },
   "recording-expanded": { w: 392, h: 76, r: 34 },
   "recording-media-expanded": { w: 404, h: 145, r: 40 },
-  "idle-expanded": { w: 424, h: 150, r: 40 },
+  "idle-expanded": { w: 464, h: 170, r: 40 },
   "weather-expanded": { w: 424, h: 232, r: 40 },
   "notification":  { w: 404, h: 78, r: 34 },
   "inbox":         { w: 200, h: 32, r: 16 },
@@ -39,6 +39,7 @@ var sizes = {
 var activityOrder = ["recording", "timer", "activity", "media", "stopwatch", "calendar", "mic", "inbox"]
 
 function activities(flags) {
+  flags = flags || {}
   var out = []
   for (var i = 0; i < activityOrder.length; i++)
     if (flags[activityOrder[i]]) out.push(activityOrder[i])
@@ -77,9 +78,8 @@ function viewFor(state) {
   }
   if (state.hud && state.hud.layout === "progress") return "hud-progress"
   if (state.notification) return state.notificationActions ? "notification-actions" : "notification"
-  if (state.hud) return state.hud.layout === "progress" ? "hud-progress"
-    : (state.hud.layout === "track" ? "hud-track"
-      : (state.hud.layout === "toast" ? "hud-toast" : "hud-label"))
+  if (state.hud) return state.hud.layout === "track" ? "hud-track"
+    : (state.hud.layout === "toast" ? "hud-toast" : "hud-label")
   if (state.primary) return state.primary
   if (state.idleHidden) return "hidden"
   return state.hovered ? "idle-hover" : "idle"
@@ -143,12 +143,15 @@ function parseDuration(text) {
   return matched ? Math.round(total) : 0
 }
 
-// 272.4s -> "4:32"; with tenths -> "4:32.4". Hours when needed.
+// 272.4s -> "4:32"; with tenths -> "4:32.4". Hours when needed. Tenths use
+// integer math: a float 0.7 is stored as 0.6999…, and floor((s-whole)*10)
+// then reads one tenth low for ~10% of values.
 function formatClock(seconds, tenths) {
   var s = Math.max(0, Number(seconds) || 0)
-  var whole = Math.floor(s)
+  var t10 = Math.round(s * 10)
+  var whole = Math.floor(t10 / 10)
   var text = formatTime(whole)
-  if (tenths) text += "." + Math.floor((s - whole) * 10)
+  if (tenths) text += "." + (t10 % 10)
   return text
 }
 
@@ -212,9 +215,13 @@ function expandEvent(ev, from, to) {
     if (kv.length === 2) rule[kv[0].toUpperCase()] = kv[1]
   })
   var freq = rule.FREQ
-  var interval = Math.max(1, parseInt(rule.INTERVAL || "1", 10))
+  // Malformed INTERVAL/COUNT must not become NaN: NaN poisons the modulo
+  // and count comparisons, and the event silently loses every occurrence.
+  var iv = parseInt(rule.INTERVAL || "1", 10)
+  var interval = isFinite(iv) && iv >= 1 ? iv : 1
   var until = rule.UNTIL ? (icsDate(rule.UNTIL) || {}).time : Infinity
-  var count = rule.COUNT ? parseInt(rule.COUNT, 10) : Infinity
+  var cv = rule.COUNT ? parseInt(rule.COUNT, 10) : Infinity
+  var count = isFinite(cv) && cv >= 1 ? cv : Infinity
   var duration = ev.end - ev.start
   var first = new Date(ev.start)
   if (freq === "MONTHLY" || freq === "YEARLY") {
@@ -277,6 +284,11 @@ function parseIcs(text, from, to, includeAllDay) {
       continue
     }
     if (!ev) continue
+    // Alarms carry their own DESCRIPTION/SUMMARY; without this skip the
+    // alarm's text replaces the event's and its links hijack the click.
+    if (line === "BEGIN:VALARM") { ev.alarm = true; continue }
+    if (line === "END:VALARM") { ev.alarm = false; continue }
+    if (ev.alarm) continue
     var colon = line.indexOf(":")
     if (colon < 0) continue
     var name = line.substring(0, colon).split(";")[0].toUpperCase()
@@ -308,7 +320,7 @@ function eventsByDay(events) {
     var e = events[i]
     var d = new Date(e.start)
     var day = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-    var last = e.allDay ? e.end - 1 : e.end - 1
+    var last = e.end - 1
     for (var n = 0; n < 62 && day.getTime() <= last; n++) {
       var key = dayKey(day.getTime())
       if (!map[key]) map[key] = []
@@ -371,7 +383,7 @@ function untilText(start, now) {
 
 // "now", "5m", "2h", "3d" — how long ago a notification arrived.
 function ago(time, now) {
-  var s = Math.max(0, Math.floor((Number(now) - Number(time)) / 1000))
+  var s = Math.max(0, Math.floor((Number(now || Date.now()) - Number(time)) / 1000))
   if (s < 60) return "now"
   if (s < 3600) return Math.floor(s / 60) + "m"
   if (s < 86400) return Math.floor(s / 3600) + "h"
@@ -419,6 +431,29 @@ function batteryIcon(fraction, charging) {
 
 function percentText(fraction) {
   return Math.round(clamp01(fraction) * 100) + "%"
+}
+
+// Power profiles (power-profiles-daemon). The glyphs are the ones Omarchy's
+// own power panel uses; the chip cycles performance -> balanced -> power-saver.
+var powerProfileOrder = ["performance", "balanced", "power-saver"]
+
+function profileIcon(name) {
+  if (name === "power-saver") return "󰌪"
+  if (name === "balanced") return "󰊚"
+  if (name === "performance") return "󰓅"
+  return "󰂄"
+}
+
+function profileName(name) {
+  if (name === "power-saver") return "Power Saver"
+  if (name === "balanced") return "Balanced"
+  if (name === "performance") return "Performance"
+  return "Power Profile"
+}
+
+function nextPowerProfile(name) {
+  var i = powerProfileOrder.indexOf(name)
+  return powerProfileOrder[(i + 1) % powerProfileOrder.length]
 }
 
 // MPRIS proxies (playerctld) mirror another player; showing them would put
@@ -474,6 +509,7 @@ function sameTrack(a, b) {
 // playing the same song only the one with the better metadata.
 function candidates(players) {
   var list = []
+  players = players || []
   for (var i = 0; i < players.length; i++) {
     var p = players[i]
     if (!p || isProxyPlayer(p) || !hasTrack(p)) continue
@@ -602,6 +638,7 @@ function osdGlyph(name) {
 
 function osdHud(payload, show) {
   var p = payload || {}
+  show = show || {}
   var key = String(p.icon || "").toLowerCase()
   var message = String(p.message || "")
   var max = Math.max(1, parseInt(p.max || "100", 10) || 100)
@@ -788,16 +825,22 @@ function weatherFromWttr(report, labelOverride) {
   if (!report || !report.current_condition || !report.current_condition.length) return null
   var cc = report.current_condition[0]
   var num = function(v) { var n = parseFloat(String(v)); return isNaN(n) ? null : String(Math.round(n)) }
-  var hours = parseInt(String(cc.observation_time ? "" : "0"), 10) // placeholder no-op
-  var isDay = true
+  // wttr's j1 answer carries no sunrise/sunset for the current hour; the
+  // observation clock is a decent stand-in for day vs night (the open-meteo
+  // path does it exactly with is_day).
+  var hour = new Date().getHours()
+  var isDay = hour >= 6 && hour < 19
   var out = {
     label: labelOverride || "",
-    icon: weatherIconForCode(cc.weatherCode, false) || "",
-    kind: weatherKindForCode(cc.weatherCode, false),
+    icon: weatherIconForCode(cc.weatherCode, isDay) || "",
+    kind: weatherKindForCode(cc.weatherCode, isDay),
     tempC: num(cc.temp_C), tempF: num(cc.temp_F),
     feelsC: num(cc.FeelsLikeC), feelsF: num(cc.FeelsLikeF),
-    windKmph: num(cc.windspeedKmph) ? cc.windspeedKmph : "",
-    windMph: num(cc.windspeedMiles) ? cc.windspeedMiles : "",
+    // num()'s rounded string is the value to show: a raw "11.1" reads
+    // inconsistent next to every other field, and a calm day must show
+    // "0" rather than blank (num("0") is truthy as a String).
+    windKmph: num(cc.windspeedKmph) || "",
+    windMph: num(cc.windspeedMiles) || "",
     humidity: num(cc.humidity),
     isDay: isDay,
     days: []
@@ -825,12 +868,21 @@ function weatherPad2(n) { return (n < 10 ? "0" : "") + n }
 
 // The next ~12 hours of precipitation probability, local hour first, for
 // the mini bar chart in the weather pane. Open-meteo only (wttr has no
-// hourly probability feed).
-function weatherRainUpNext(hourly, now) {
+// hourly probability feed). The hourly times are stamped in the PLACE's
+// timezone (timezone=auto), so the reference clock must come from the
+// report itself — current.time is in that same zone; a Date.now() stamp
+// would offset the whole chart for any place in another timezone.
+function weatherRainUpNext(hourly, reference) {
   if (!hourly || !hourly.time || !hourly.precipitation_probability) return []
-  var d = new Date(now)
-  var stamp = d.getFullYear() + "-" + weatherPad2(d.getMonth() + 1) + "-"
-    + weatherPad2(d.getDate()) + "T" + weatherPad2(d.getHours())
+  var ref = String(reference || "")
+  var stamp
+  if (ref.length >= 13 && ref.charAt(10) === "T") {
+    stamp = ref.slice(0, 13)
+  } else {
+    var d = new Date()
+    stamp = d.getFullYear() + "-" + weatherPad2(d.getMonth() + 1) + "-"
+      + weatherPad2(d.getDate()) + "T" + weatherPad2(d.getHours())
+  }
   var out = []
   for (var i = 0; i < hourly.time.length && out.length < 12; ++i) {
     var t = String(hourly.time[i] || "")
@@ -870,12 +922,14 @@ function weatherFromOpenMeteo(report, labelOverride) {
         icon: weatherIconForOpenMeteoCode(daily.weather_code ? daily.weather_code[i] : 0, isDay),
         maxC: weatherRound(daily.temperature_2m_max ? daily.temperature_2m_max[i] : ""),
         minC: weatherRound(daily.temperature_2m_min ? daily.temperature_2m_min[i] : ""),
-        maxF: weatherRound(daily.temperature_2m_max ? weatherRound(daily.temperature_2m_max[i]) * 9 / 5 + 32 : ""),
-        minF: weatherRound(daily.temperature_2m_min ? weatherRound(daily.temperature_2m_min[i]) * 9 / 5 + 32 : "")
+        // Convert the raw float once, then round: routing through the
+        // rounded C string double-rounds and can move the F by a degree.
+        maxF: weatherRound(daily.temperature_2m_max ? parseFloat(daily.temperature_2m_max[i]) * 9 / 5 + 32 : ""),
+        minF: weatherRound(daily.temperature_2m_min ? parseFloat(daily.temperature_2m_min[i]) * 9 / 5 + 32 : "")
       })
     }
   }
-  out.rain = weatherRainUpNext(report.hourly, Date.now())
+  out.rain = weatherRainUpNext(report.hourly, current.time)
   out.sunrise = daily && daily.sunrise && daily.sunrise.length ? weatherHourMinute(daily.sunrise[0]) : ""
   out.sunset = daily && daily.sunset && daily.sunset.length ? weatherHourMinute(daily.sunset[0]) : ""
   return out
@@ -902,14 +956,20 @@ function weatherParseLocation(raw) {
 function abbrevTokens(n) {
   var v = Number(n)
   if (!isFinite(v) || v <= 0) return "0"
-  if (v >= 1000000) return (v / 1000000).toFixed(1) + "m"
+  // 999500 rounds to 1000k at the k boundary — promote to m instead of
+  // printing four digits the pill has no room for.
+  if (v >= 999500) return (v / 1000000).toFixed(1) + "m"
   if (v >= 1000) return Math.round(v / 1000) + "k"
   return String(v)
 }
 
 // sysfs hwmon dump -> {cpuTemp, gpuTemp, gpuBusy} in C and percent. Chips
-// carry their name on the same line; k10temp is the CPU, amdgpu the GPU.
-// The busiest amdgpu card wins. Desktops with no GPU lines just drop them.
+// carry their name on the same line: k10temp/coretemp/zenpower (or any
+// cpu*) is the CPU, amdgpu/i915/nouveau (or any gpu*) the GPU. Hottest
+// card and busiest card win independently. gpu_busy_percent arrives as a
+// bare number on its own line — never treat a named sensor's value (a
+// temperature, a fan RPM) as a busy percent. Desktops with no GPU lines
+// just drop them.
 function hardwareStats(raw) {
   var out = { cpuTemp: null, gpuTemp: null, gpuBusy: null }
   var lines = String(raw || "").split("\n")
@@ -918,19 +978,21 @@ function hardwareStats(raw) {
     var m = line.match(/(\d+)\s*$/)
     if (!m) continue
     var n = parseInt(m[1], 10)
-    if (isNaN(n)) continue
-    if (line.indexOf("k10temp") !== -1 || line.indexOf("coretemp") !== -1 || line.indexOf("cpu") !== -1) {
-      var t = n > 2000 ? Math.round(n / 1000) : n
-      if (t > 0 && t < 130) out.cpuTemp = t
-    } else if (line.indexOf("amdgpu") !== -1 || line.indexOf("gpu") !== -1) {
-      var gt = n > 2000 ? Math.round(n / 1000) : n
-      if (gt > 0 && gt < 130) out.gpuTemp = Math.max(out.gpuTemp !== null ? out.gpuTemp : 0, gt)
-    } else if (line.indexOf("amdgpu") === -1 && line.indexOf("k10temp") === -1 && n <= 100) {
-      // gpu_busy_percent lines are bare percents
-      if (out.cpuTemp === null || out.gpuTemp === null) out.gpuBusy = Math.max(out.gpuBusy !== null ? out.gpuBusy : 0, n)
+    if (isNaN(n) || line.indexOf("busy") !== -1) continue
+    // Millidegrees (hwmon temp inputs) normalize to C; sub-zero ambient is
+    // legal, sensor garbage is not.
+    var t = n > 2000 ? Math.round(n / 1000) : n
+    var isTemp = t > -40 && t < 130
+    if (line.indexOf("k10temp") !== -1 || line.indexOf("coretemp") !== -1
+        || line.indexOf("zenpower") !== -1 || line.indexOf("cpu") !== -1) {
+      if (isTemp) out.cpuTemp = t
+    } else if (line.indexOf("amdgpu") !== -1 || line.indexOf("i915") !== -1
+        || line.indexOf("nouveau") !== -1 || line.indexOf("gpu") !== -1) {
+      if (isTemp) out.gpuTemp = Math.max(out.gpuTemp !== null ? out.gpuTemp : -Infinity, t)
     }
   }
-  // The bare-percent block: lines that are just numbers with no chip name.
+  if (out.gpuTemp === -Infinity) out.gpuTemp = null
+  // gpu_busy_percent: only lines that are just a number count.
   var busies = []
   for (var j = 0; j < lines.length; ++j) {
     var l = lines[j].trim()
@@ -944,7 +1006,7 @@ function hardwareStats(raw) {
 function agentLimitTag(label, index) {
   var s = String(label || "").toLowerCase()
   if (s.indexOf("5h") !== -1) return "5h"
-  if (s.indexOf("week") !== -1 || s.indexOf("7") !== -1) return "wk"
+  if (s.indexOf("week") !== -1 || s.indexOf("7-day") !== -1) return "wk"
   if (s.indexOf("month") !== -1) return "mo"
   return String(label).slice(0, 6) || "#" + (index + 1)
 }

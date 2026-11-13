@@ -25,8 +25,8 @@ Item {
     width: view.width
     height: view.height
     source: island.mediaArt
-    sourceSize.width: 96
-    sourceSize.height: 96
+    sourceSize.width: Math.max(96, Math.ceil(width * island.dpr / 4))
+    sourceSize.height: Math.max(96, Math.ceil(width * island.dpr / 4))
     fillMode: Image.PreserveAspectCrop
     asynchronous: true
   }

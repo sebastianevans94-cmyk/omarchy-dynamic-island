@@ -4,14 +4,34 @@ import qs.Commons
 import "../IslandModel.js" as Model
 
 // What the island opens into when nothing is live: the time with the
-// weather beside it, now-playing below while something is playing, the
-// battery on the right, and one-tap timers and a stopwatch at the bottom.
+// weather beside it, now-playing below while something is playing, and the
+// system buttons — power profile (with battery/charge on battery devices),
+// DND, night light, theme, lock — with one-tap timers and a stopwatch.
 Item {
   id: view
 
   property var island: null
   readonly property int pad: island.s(26)
   readonly property var nextEvent: island.calendar.next
+
+  // The quick-settings chips of the bottom row: the power-profile chip
+  // first — icons only, so it reads at a glance: the daemon's current
+  // profile glyph, and on a battery device the charge glyph beside it
+  // (green while charging). Then DND, night light, theme, lock.
+  // Glyphs ride in a parts row, not one string: they need the mono family,
+  // and mixing them into the text font's string overlaps.
+  readonly property var quickChips: {
+    var prof = island.powerProfile || "balanced"
+    var glyphs = [Model.profileIcon(prof)]
+    if (island.hasBattery)
+      glyphs.push(Model.batteryIcon(island.batteryLevel, island.charging))
+    var chips = [{ kind: "power", on: false, glyphs: glyphs }]
+    chips.push({ kind: "dnd", label: "DND", glyph: island.dndActive ? "󰂛" : "󰂚", on: island.dndActive })
+    chips.push({ kind: "night", label: "Night", glyph: "󰖜", on: false })
+    chips.push({ kind: "theme", label: "Theme", glyph: "󰏘", on: false })
+    chips.push({ kind: "lock", label: "Lock", glyph: "󰌾", on: false })
+    return chips
+  }
 
   SystemClock {
     id: clock
@@ -32,7 +52,7 @@ Item {
     font.family: island.fontFamily
     font.pixelSize: island.f(30)
     font.weight: Font.Light
-    font.letterSpacing: -1
+    font.letterSpacing: -island.ls(1)
     font.features: { "tnum": 1 }
     color: island.fg
   }
@@ -41,7 +61,9 @@ Item {
   // right edge, so it fills the gap instead of a thin strip: conditions and
   // temp, the sky's own word, then the ranges beneath, and a third line of
   // whatever is most actionable — the next umbrella window, else the sun
-  // times, else feels-like. A tap still opens the full pane.
+  // times, else feels-like. A tap still opens the full pane. Battery and
+  // charge live on the profile chip in the bottom row, so the card keeps
+  // the full width at every scale.
   Rectangle {
     id: weatherChip
     visible: island.showWeather
@@ -50,7 +72,9 @@ Item {
     anchors.right: parent.right
     anchors.rightMargin: view.pad
     y: island.s(14)
-    height: island.s(62)
+    // Content is f()-scaled (fonts), the design height s()-scaled: keep the
+    // design size but never clip — grow to fit when fonts run larger.
+    height: Math.max(island.s(62), contentCol.implicitHeight + island.s(16))
     radius: view.island.s(14)
     color: Util.alpha(island.accentColor,
       weatherMouse.pressed ? 0.28 : (weatherMouse.containsMouse ? 0.18 : 0.10))
@@ -77,6 +101,7 @@ Item {
     }
 
     Column {
+      id: contentCol
       anchors.fill: parent
       anchors.margins: view.island.s(8)
       spacing: view.island.s(2)
@@ -196,23 +221,6 @@ Item {
     color: view.nextEvent ? island.accentColor : island.fgDim
   }
 
-  // Battery: small and dim beside the date, freeing the whole right side of
-  // the clock row for the weather chip.
-  Text {
-    visible: island.hasBattery
-    x: view.pad + island.s(180)
-    anchors.verticalCenter: dateLine.verticalCenter
-    text: Model.batteryIcon(island.batteryLevel, island.charging) + " "
-      + Model.percentText(island.batteryLevel) + (island.charging ? " ·chg" : "")
-    textFormat: Text.PlainText
-    renderType: Text.NativeRendering
-    font.family: island.fontFamily
-    font.pixelSize: island.f(12)
-    font.features: { "tnum": 1 }
-    color: island.charging ? island.greenColor
-      : (island.batteryLevel <= 0.2 ? island.urgentColor : island.fgDim)
-  }
-
   // Now playing, full width below the clock row — while something is live.
   // Clicking anywhere on it opens the player pane.
   Rectangle {
@@ -221,7 +229,9 @@ Item {
     x: view.pad
     y: island.s(80)
     width: parent.width - view.pad * 2
-    height: island.s(22)
+    // Fit the f()-scaled transport buttons: an s()-only height breaks when
+    // fontScale exceeds the spacing scale (buttons poke out of the capsule).
+    height: Math.max(island.s(22), transportRow.implicitHeight + island.s(4))
     radius: height / 2
     color: Util.alpha(island.fg, mediaMouse.containsMouse ? 0.18 : 0.10)
     scale: mediaMouse.pressed ? 0.98 : 1
@@ -243,6 +253,8 @@ Item {
       anchors.left: miniArt.right
       anchors.leftMargin: island.s(7)
       anchors.verticalCenter: parent.verticalCenter
+      anchors.right: transportRow.left
+      anchors.rightMargin: island.s(6)
       text: (island.mediaTitle || "Now playing")
         + (island.mediaArtist !== "" ? "  ·  " + island.mediaArtist : "")
       textFormat: Text.PlainText
@@ -251,11 +263,14 @@ Item {
       font.pixelSize: island.f(11)
       color: island.mediaPlaying ? island.fg : island.fgDim
       elide: Text.ElideRight
-      width: parent.width - island.s(96)
     }
 
-    // Quick transport on the row itself: prev, play/pause, next.
+    // Quick transport on the row itself: prev, play/pause, next. Declared
+    // BEFORE the row-wide open-click MouseArea — QML delivers to the
+    // topmost sibling, so a MouseArea after the Row would swallow every
+    // button's hover and press.
     Row {
+      id: transportRow
       anchors.right: parent.right
       anchors.rightMargin: island.s(6)
       anchors.verticalCenter: parent.verticalCenter
@@ -289,6 +304,8 @@ Item {
       }
     }
 
+    // Row-wide "open the player" click; declared last so the buttons above
+    // it receive their events first.
     MouseArea {
       id: mediaMouse
       anchors.fill: parent
@@ -423,26 +440,30 @@ Item {
     }
 
     // Quick settings, centered between the two bookends. Each fires its
-    // action on tap: DND (the island's own daemon state), night light, the
-    // next installed theme, the lock screen.
+    // action on tap: the power profile (icons only — cycles through the
+    // daemon's three profiles, and on a battery device the charge glyph
+    // beside it makes it the charge indicator, green while charging),
+    // DND (the island's own daemon state), night light, the next installed
+    // theme, the lock screen.
     Row {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.verticalCenter: parent.verticalCenter
-      spacing: island.s(8)
+      spacing: island.s(6)
 
       Repeater {
-        model: [
-          { label: "DND", glyph: island.dndActive ? "󰂛" : "󰂚", on: island.dndActive },
-          { label: "Night", glyph: "󰖜", on: false },
-          { label: "Theme", glyph: "󰏘", on: false },
-          { label: "Lock", glyph: "󰌾", on: false }
-        ]
+        model: view.quickChips
 
         Rectangle {
           id: chip
           required property var modelData
+          property bool hovered: false
+          // The power tooltip outlives the pointer's time on the chip by a
+          // beat: closing the instant the chip is left makes the popup
+          // vanish while the pointer travels the gap to the tooltip itself.
+          property bool tipOpen: false
           height: island.s(26)
-          width: chipLabel.implicitWidth + island.s(12)
+          width: (chip.modelData.glyphs !== undefined
+            ? chipSpans.implicitWidth : chipLabel.implicitWidth) + island.s(12)
           radius: height / 2
           color: Util.alpha(chip.modelData.on ? island.accentColor : island.fg,
                             chipMouse.pressed ? 0.30 : (chipMouse.containsMouse ? 0.18 : 0.11))
@@ -451,8 +472,34 @@ Item {
           Behavior on scale { NumberAnimation { duration: 120 } }
           Behavior on color { ColorAnimation { duration: 120 } }
 
+          // Icon-only chips (the power chip): one mono Text per glyph, so
+          // the nerd font carries them without fallback overlap.
+          Row {
+            id: chipSpans
+            anchors.centerIn: parent
+            spacing: island.s(3)
+            visible: chip.modelData.glyphs !== undefined
+
+            Repeater {
+              model: chip.modelData.glyphs || []
+
+              Text {
+                required property var modelData
+                anchors.verticalCenter: parent.verticalCenter
+                text: modelData
+                textFormat: Text.PlainText
+                renderType: Text.NativeRendering
+                font.family: island.fontFamily
+                font.pixelSize: island.f(12)
+                font.weight: Font.DemiBold
+                color: chip.modelData.kind === "power" && island.charging ? island.greenColor : island.fg
+              }
+            }
+          }
+
           Text {
             id: chipLabel
+            visible: chip.modelData.glyphs === undefined
             anchors.centerIn: parent
             text: chip.modelData.glyph + " " + chip.modelData.label
             textFormat: Text.PlainText
@@ -468,11 +515,70 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: {
+              chip.hovered = containsMouse
+              if (chip.modelData.kind === "power") {
+                if (containsMouse) { chip.tipOpen = true; tipClose.stop() }
+                else tipClose.restart()
+              }
+            }
             onClicked: {
-              if (chip.modelData.label === "DND") { island.toggleDnd(); return }
-              if (chip.modelData.label === "Night") { island.runShell(["omarchy", "toggle", "nightlight"]); return }
-              if (chip.modelData.label === "Theme") { island.cycleTheme(); return }
+              if (chip.modelData.kind === "power") { island.cycleProfile(); return }
+              if (chip.modelData.kind === "dnd") { island.toggleDnd(); return }
+              if (chip.modelData.kind === "night") { island.runShell(["omarchy", "toggle", "nightlight"]); return }
+              if (chip.modelData.kind === "theme") { island.cycleTheme(); return }
               island.runShell(["omarchy", "system", "lock"])
+            }
+          }
+
+          Timer {
+            id: tipClose
+            interval: 350
+            onTriggered: chip.tipOpen = false
+          }
+
+          // Hover info popup: battery details + the selected power profile.
+          Rectangle {
+            id: powerTip
+            visible: chip.tipOpen
+            z: 100
+            anchors.bottom: chip.top
+            anchors.bottomMargin: island.s(4)
+            anchors.horizontalCenter: chip.horizontalCenter
+            width: powerTipText.implicitWidth + island.s(12)
+            height: island.s(22)
+            radius: height / 2
+            color: Util.alpha("#000000", 0.82)
+            border.color: Util.alpha(island.fg, 0.25)
+            border.width: 1
+
+            Text {
+              id: powerTipText
+              anchors.centerIn: parent
+              text: {
+                var prof = Model.profileName(island.powerProfile || "balanced")
+                if (!island.hasBattery) return prof
+                var state = island.charging ? "charging" : "on battery"
+                return prof + "  ·  " + Model.batteryIcon(island.batteryLevel, island.charging)
+                  + " " + Model.percentText(island.batteryLevel) + "  ·  " + state
+              }
+              textFormat: Text.PlainText
+              renderType: Text.NativeRendering
+              font.family: island.textFamily
+              font.pixelSize: island.f(11)
+              font.weight: Font.DemiBold
+              color: "#ffffff"
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              // Hovering the tooltip holds it open; leaving it (without
+              // returning to the chip) closes it after the grace beat.
+              onContainsMouseChanged: {
+                if (containsMouse) tipClose.stop()
+                else if (!chipMouse.containsMouse) tipClose.restart()
+              }
             }
           }
         }

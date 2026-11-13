@@ -27,7 +27,7 @@ Item {
       font.family: island.textFamily
       font.pixelSize: island.f(11)
       font.weight: Font.DemiBold
-      font.letterSpacing: 0.6
+      font.letterSpacing: island.ls(0.6)
       color: island.urgentColor
     }
   }

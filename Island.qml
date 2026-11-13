@@ -148,18 +148,46 @@ Item {
     return t === "theme" ? Style.font.family : t
   }
 
-  function s(px) { return Math.round(Style.space(px) * scaleFactor) }
+  function s(px) { return Math.round(Style.space(px) * scaleFactor * scaleComp) }
 
   // Device pixel grid (1.25 on a 125% display).
   readonly property real dpr: win.devicePixelRatio > 0 ? win.devicePixelRatio : 1
   function snap(v) { return Math.round(v * dpr) / dpr }
+
+  // Physical-size tracking ("followScale": true in this plugin's shell.json
+  // entry). Hyprland scale changes keep logical pixels the same size, so a
+  // drawn surface shrinks or grows physically with every change. With
+  // followScale the island instead holds the device-pixel footprint it had
+  // when it loaded, compensating later scale changes by dprRef / dpr: on a
+  // screen the island always covers the same physical area, whatever the
+  // current scale. The reference is frozen once, on the first valid read.
+  readonly property bool followScale: setting("followScale", false) === true
+  property real dprRef: 0
+  readonly property real dprValid: win.devicePixelRatio > 0 ? win.devicePixelRatio : 0
+  readonly property real scaleComp: followScale && dprRef > 0 && dpr > 0 ? dprRef / dpr : 1
+  // Freeze the reference only once the output's real scale is known: Qt
+  // answers a default devicePixelRatio while the screen object already
+  // exists but before the Wayland output binds, so "first positive read"
+  // captures a lie. The window mapping and a late timer are the moments
+  // the true value is guaranteed to have landed.
+  Timer {
+    interval: 2500
+    running: root.followScale
+    // Authoritative: overwrites any early capture, since Qt's
+    // devicePixelRatio can still be a default long after the window maps.
+    onTriggered: if (root.dprValid > 0) root.dprRef = root.dprValid
+  }
 
   // Content appears only once the shape has (nearly) reached the new size,
   // so a view is never drawn cut off by a shape still growing towards it.
   readonly property bool shapeSettled: Math.abs(stage.w - s(viewSize.w)) < s(18)
     && Math.abs(stage.h - s(viewSize.h)) < s(12)
   function showing(name) { return view === name && shapeSettled }
-  function f(px) { return Math.max(6, Math.round(px * Style.fontScale * scaleFactor)) }
+  function f(px) { return Math.max(6, Math.round(px * Style.fontScale * scaleFactor * scaleComp)) }
+
+  // Letter-spacing rides the same scale as fonts, without f()'s 6px
+  // readability floor: tracking is designed to live below one pixel.
+  function ls(px) { return px * Style.fontScale * scaleFactor * scaleComp }
 
   // Nothing announces itself for the first moments after (re)load, so the
   // initial volume/brightness/battery reads do not pop HUDs.
@@ -439,7 +467,7 @@ Item {
   Timer {
     interval: 2000
     repeat: true
-    running: root.showRecording
+    running: root.showRecording && !root.fullscreenOnTarget
     triggeredOnStart: true
     onTriggered: if (!recordingProbe.running) recordingProbe.running = true
   }
@@ -914,6 +942,55 @@ Item {
     if (!clipboardRead.running) clipboardRead.running = true
   }
 
+  // ------------------------------------------------------------------
+  // Power profile: the drop-down's profile chip reads this, and tapping it
+  // cycles performance -> balanced -> power-saver via power-profiles-daemon.
+  // A 5 s poll (same shape as the camera probe) keeps the chip honest about
+  // changes made elsewhere — the omarchy menu, the AC udev rule, ppd itself.
+  // ------------------------------------------------------------------
+  property string powerProfile: ""
+
+  Process {
+    id: powerProfileCtl
+    // Cycling runs the set and re-reads in one go, so the chip updates from
+    // what the daemon actually accepted rather than what we guessed.
+    property string pending: ""
+    command: pending !== ""
+      ? ["sh", "-c", "powerprofilesctl set " + pending + " 2>/dev/null; powerprofilesctl get"]
+      : ["sh", "-c", "powerprofilesctl get"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var p = String(text || "").trim()
+        if (p !== "") root.powerProfile = p
+        powerProfileCtl.pending = ""
+      }
+    }
+  }
+
+  function cycleProfile() {
+    var next = Model.nextPowerProfile(powerProfile)
+    // Stop any in-flight read first: the collector would otherwise clear
+    // the pending request and swallow the cycle.
+    powerProfileCtl.running = false
+    powerProfileCtl.pending = next
+    powerProfileCtl.running = true
+    showHud({ layout: "label", label: Model.profileName(next),
+      icon: Model.profileIcon(next), color: accentColor, duration: 1800 })
+  }
+
+  Timer {
+    interval: 5000
+    triggeredOnStart: true
+    repeat: true
+    running: !root.fullscreenOnTarget
+    // The poll keeps the chip honest about changes made elsewhere — the
+    // omarchy menu, the AC udev rule, ppd itself.
+    onTriggered: if (!powerProfileCtl.running) powerProfileCtl.running = true
+  }
+
+  onViewChanged: if (view === "idle-expanded" && !powerProfileCtl.running)
+    powerProfileCtl.running = true
+
   function openLink(url) {
     Quickshell.execDetached(["xdg-open", String(url)])
     collapse()
@@ -938,7 +1015,10 @@ Item {
   Timer {
     interval: 3000
     repeat: true
-    running: root.setting("camera", true) !== false
+    // Paused while the island is hidden behind a fullscreen window: the
+    // find over /proc is the priciest poll in the plugin and no one can
+    // see the camera glyph then.
+    running: root.setting("camera", true) !== false && !root.fullscreenOnTarget
     triggeredOnStart: true
     onTriggered: if (!cameraProbe.running) cameraProbe.running = true
   }
@@ -1237,21 +1317,27 @@ Item {
   function snugSize(name, size) {
     if (!melt || !size) return size
     if (Model.compactViews.indexOf(name) === -1) return size
-    return { w: size.w, h: barThickness, r: barThickness / 2 }
+    // barThickness comes from Style.bar already font-scaled, while s()
+    // scales again through Style.space — dividing the double application
+    // back out makes the drawn pill land exactly on the bar's painted
+    // height, instead of hanging below its bottom line.
+    var scale = Style.effectiveSpacingScale * scaleFactor * scaleComp
+    var h = scale > 0 ? barThickness / scale : barThickness
+    return { w: size.w, h: h, r: h / 2 }
   }
   readonly property var viewSize: {
     var v = snugSize(view, Model.sizeFor(view, viewCounts, notchSize))
     // The resting pill grows to fit what the ticker is showing, so the
     // island breathes a little as the glances change.
     if ((view === "idle" || view === "idle-hover") && (idleFace === "ticker" || idleFace === "clock")) {
-      var unit = Style.spacing.scale * scaleFactor
+      var unit = Style.spacing.scale * scaleFactor * scaleComp
       var needed = Math.ceil(idleMetrics.advanceWidth / unit) + 44 + (view === "idle-hover" ? 12 : 0)
       // A wider resting band so the pill fills the bar's middle without
       // crowding the tabs on either end.
       return { w: Math.min(380, Math.max(v.w, needed)), h: v.h, r: v.r }
     }
     if ((view === "idle" || view === "idle-hover") && idleFace === "split") {
-      var unit = Style.spacing.scale * scaleFactor
+      var unit = Style.spacing.scale * scaleFactor * scaleComp
       // All pieces at once: measured as one run, with room for the two
       // separator dots and side padding.
       var needed = Math.ceil(splitMetrics.advanceWidth / unit) + s(44) + (view === "idle-hover" ? 12 : 0)
@@ -1262,7 +1348,7 @@ Item {
       // full agent card ("5h 11% · wk 8% · mo 4% · today 76.3m") fits
       // without squeezing the label into nothing. Ceiling the panel, keep
       // at least the designed width.
-      var unit = Style.spacing.scale * scaleFactor
+      var unit = Style.spacing.scale * scaleFactor * scaleComp
       var needed = Math.ceil((hudLabelMetrics.advanceWidth + hudValueMetrics.advanceWidth + s(58)) / unit)
       return { w: Math.min(500, Math.max(v.w, needed)), h: v.h, r: v.r }
     }
@@ -1709,8 +1795,11 @@ Item {
           win: { x: win.x, y: win.y, w: win.width, h: win.height },
           island: { x: island.x, y: island.y, w: island.width, h: island.height },
           legacy: null,
+          fullscreenOnTarget: root.fullscreenOnTarget,
           barThickness: root.barThickness,
           melt: root.melt,
+          dpr: { now: root.dpr, ref: root.dprRef, comp: root.scaleComp },
+          power: { profile: root.powerProfile, battery: root.hasBattery, charging: root.charging },
           viewSize: root.viewSize
         }
       })
@@ -1735,11 +1824,92 @@ Item {
     return screens[0]
   }
 
+  // ------------------------------------------------------------------
+  // Fullscreen hiding: Hyprland keeps top layer surfaces above fullscreen
+  // windows, so the island would float over a fullscreen app. Probe the
+  // focused window and fold the island away while it is fullscreen on this
+  // island's monitor. Events debounce into one probe, not one per event.
+  // ------------------------------------------------------------------
+  property bool fullscreenOnTarget: false
+
+  Timer {
+    id: fullscreenDebounce
+    interval: 150
+    onTriggered: root.probeFullscreen()
+  }
+
+  // Safety net: events are the primary trigger, but one missed while the
+  // probe was in flight would leave a stale flag until the next event. A
+  // slow re-poll keeps the flag honest; two hyprctl calls every 5 s is
+  // noise next to the plugin's other polls.
+  Timer {
+    interval: 5000
+    repeat: true
+    running: true
+    onTriggered: root.probeFullscreen()
+  }
+
+  function probeFullscreen() {
+    // Restart an in-flight probe rather than ignore it: Quickshell treats
+    // running = true on a running process as a no-op, and the stale launch
+    // would return the answer the newer window state needed.
+    fullscreenProbe.running = false
+    fullscreenProbe.running = true
+  }
+
+  Component.onCompleted: probeFullscreen()
+
+  Process {
+    id: fullscreenProbe
+    command: ["sh", "-c", "hyprctl -j monitors; echo __ISLAND_SPLIT__; hyprctl -j activewindow"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var parts = String(text || "").split("__ISLAND_SPLIT__")
+        var monitors = null
+        try { monitors = JSON.parse(parts[0]) } catch (e) { monitors = null }
+        var targetName = root.targetScreen ? root.targetScreen.name : ""
+        if (!monitors || !monitors.length || targetName === "") {
+          root.fullscreenOnTarget = false
+          return
+        }
+        var targetId = -1
+        for (var i = 0; i < monitors.length; i++)
+          if (monitors[i].name === targetName) { targetId = monitors[i].id; break }
+        if (targetId < 0) { root.fullscreenOnTarget = false; return }
+        // No active window: hyprctl prints a non-JSON message, parse fails,
+        // and that is exactly the "nothing fullscreen" answer.
+        var win = null
+        try { win = JSON.parse(parts[1]) } catch (e) { win = null }
+        if (!win || !win.address) { root.fullscreenOnTarget = false; return }
+        root.fullscreenOnTarget = (win.monitor === targetId && Number(win.fullscreen) > 0)
+      }
+    }
+  }
+
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      switch (event.name) {
+        case "fullscreen":
+        case "activewindow":
+        case "activewindowv2":
+        case "workspace":
+        case "openwindow":
+        case "closewindow":
+        case "focusedmon":
+          fullscreenDebounce.restart()
+      }
+    }
+  }
+
   PanelWindow {
     id: win
 
     screen: root.targetScreen
     visible: screenRecovery.ready
+
+    onVisibleChanged: if (visible && root.dprRef === 0 && devicePixelRatio > 0)
+      root.dprRef = devicePixelRatio
 
     ScreenRecovery {
       id: screenRecovery
@@ -1770,8 +1940,10 @@ Item {
       onActivated: root.calendarAdding = false
     }
 
+    // Folded away while a fullscreen window owns this monitor; the empty
+    // input region below keeps the click-through honest then.
     mask: Region {
-      item: island
+      item: root.fullscreenOnTarget ? null : island
     }
 
     Item {
@@ -1796,7 +1968,7 @@ Item {
       // the device pixel grid, so the edges stay crisp at 1.25x/1.5x.
       Shape {
         id: notchShape
-        visible: root.notch && island.width > stage.earSize * 2
+        visible: root.notch && !root.fullscreenOnTarget && island.width > stage.earSize * 2
         anchors.fill: parent
         preferredRendererType: Shape.CurveRenderer
 
@@ -1844,7 +2016,7 @@ Item {
       // Floating style: the same body as a capsule, rim all the way round.
       Shape {
         id: capsule
-        visible: !root.notch && island.width > 4
+        visible: !root.notch && !root.fullscreenOnTarget && island.width > 4
         anchors.fill: parent
         preferredRendererType: Shape.CurveRenderer
 
@@ -1877,7 +2049,7 @@ Item {
         height: island.height + root.s(2)
         radius: island.radius
         color: root.mediaTint
-        opacity: lit ? breath : 0
+        opacity: lit && !root.fullscreenOnTarget ? breath : 0
         visible: opacity > 0.01
         property real breath: 0.5
 
@@ -1914,7 +2086,9 @@ Item {
         // The shapes above paint the body; this only clips and hosts content.
         color: "transparent"
         clip: true
-        opacity: width < 4 ? 0 : 1
+        // Gone while a fullscreen window is on the island's monitor.
+        visible: !root.fullscreenOnTarget
+        opacity: (root.fullscreenOnTarget || width < 4) ? 0 : 1
         scale: islandPress.pressed ? 0.965 : 1
         transformOrigin: Item.Top
 

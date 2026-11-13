@@ -16,7 +16,7 @@ Item {
   readonly property var live: entry && entry.ref ? entry.ref : null
   readonly property string summary: live ? Model.plainText(live.summary) : (entry ? entry.summary : "")
   readonly property string body: live ? Model.plainText(live.body) : (entry ? entry.body : "")
-  readonly property var actions: entry ? entry.actions : []
+  readonly property var actions: entry && entry.actions ? entry.actions : []
   readonly property color tone: entry && entry.critical ? island.urgentColor : island.accentColor
   readonly property int pad: island.s(16)
 

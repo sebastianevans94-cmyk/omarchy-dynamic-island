@@ -44,12 +44,15 @@ Item {
     anchors.top: parent.top
     anchors.topMargin: island.s(1)
     visible: view.kind === "inbox" && island.inbox.length > 0
-    width: island.s(9)
+    // "9+" must fit: at small plugin scale the f()-scaled text can be wider
+    // than an s(9) circle, and it pokes out (no clip here).
+    width: Math.max(island.s(9), badgeText.implicitWidth + island.s(4))
     height: width
     radius: width / 2
     color: island.accentColor
 
     Text {
+      id: badgeText
       anchors.centerIn: parent
       text: island.inbox.length > 9 ? "9+" : String(island.inbox.length)
       textFormat: Text.PlainText
@@ -66,7 +69,7 @@ Item {
     anchors.fill: parent
     anchors.margins: island.s(5)
     visible: (view.kind === "timer") || (view.kind === "activity" && !!island.activity && island.activity.progress >= 0)
-    progress: view.kind === "timer" ? island.clocks.timerProgress : (island.activity ? Math.max(0, island.activity.progress) : 0)
+    progress: view.kind === "timer" ? island.clocks.timerProgress : (island.activity && island.activity.progress >= 0 ? island.activity.progress : 0)
     color: view.kind === "timer" ? island.orangeColor : (island.activity ? island.toneFor(island.activity.color) : island.accentColor)
     lineWidth: island.s(2)
   }

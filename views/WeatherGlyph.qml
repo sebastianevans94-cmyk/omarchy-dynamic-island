@@ -27,6 +27,9 @@ Item {
     Behavior on color { ColorAnimation { duration: 400 } }
 
     SequentialAnimation on opacity {
+      // Breathing only while actually shown: an always-running infinite
+      // animation ticks the paint loop even when the island is hidden.
+      running: weatherGlyph.visible
       loops: Animation.Infinite
       NumberAnimation { to: 0.72; duration: 2400; easing.type: Easing.InOutSine }
       NumberAnimation { to: 1.0; duration: 2400; easing.type: Easing.InOutSine }

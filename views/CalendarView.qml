@@ -109,9 +109,12 @@ Item {
 
         Text {
           required property int index
+          // Qt's dayName is 1-based (Mon=1 … Sun=7); firstWeekday follows
+          // the JS convention (0 = Sunday), so remap 0 before lookup.
+          readonly property int weekday: (view.firstWeekday + index) % 7
           width: island.s(32)
           horizontalAlignment: Text.AlignHCenter
-          text: Qt.locale().dayName((view.firstWeekday + index) % 7, Locale.NarrowFormat)
+          text: Qt.locale().dayName(weekday === 0 ? 7 : weekday, Locale.NarrowFormat)
           textFormat: Text.PlainText
           renderType: Text.NativeRendering
           font.family: island.textFamily

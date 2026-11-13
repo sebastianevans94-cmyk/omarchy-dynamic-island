@@ -24,7 +24,7 @@ Item {
       anchors.fill: parent
       anchors.margins: island.s(3)
       visible: !!view.item && view.item.progress >= 0
-      progress: view.item ? Math.max(0, view.item.progress) : 0
+      progress: view.item && view.item.progress >= 0 ? view.item.progress : 0
       color: view.tone
       lineWidth: island.s(3)
     }

@@ -137,7 +137,9 @@ Item {
   }
 
   // A stalled or broken answer: retry shortly rather than sitting on the
-  // old data, but a few failures in a row go back to the refresh timer.
+  // old data, but a few failures in a row go back to the refresh timer —
+  // which retries forever, so a long network outage heals itself instead
+  // of latching "error" until the coordinates change.
   property int failStreak: 0
   function stallRetry() {
     failStreak++
@@ -146,10 +148,12 @@ Item {
       stallTimer.restart()
     } else {
       status = weatherData !== null ? "" : "error"
+      // Drop the dedupe key: the next refresh() must actually refetch.
+      latestQuery = null
     }
   }
 
-  Timer { id: stallTimer; interval: 90000; onTriggered: { weather.latestQuery = null; weather.refresh() } }
+  Timer { id: stallTimer; interval: 15000; onTriggered: { weather.latestQuery = null; weather.refresh() } }
 
   Timer {
     id: refreshTimer
@@ -163,8 +167,10 @@ Item {
   // null = nothing fetched yet; "" is a real answer for the auto/IP case.
   property var latestQuery: null
 
-  // A configured place also means the query changed: refetch right away.
-  onLatChanged: latestQuery = ""
-  onLonChanged: latestQuery = ""
-  onStateChanged: if (state !== "") latestQuery = ""
+  // A configured place also means the query changed: refetch right away
+  // (lat/lon can be seeded by wttr's IP detection mid-session — without
+  // this call the faster open-meteo path waits for the next timer tick).
+  onLatChanged: { latestQuery = ""; Qt.callLater(refresh) }
+  onLonChanged: { latestQuery = ""; Qt.callLater(refresh) }
+  onStatusChanged: if (status === "error") latestQuery = null
 }

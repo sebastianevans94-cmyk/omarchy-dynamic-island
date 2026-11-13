@@ -27,8 +27,10 @@ Item {
     var name = String(device.name || device.deviceName || "Bluetooth device")
     if (device.connected) {
       // Battery often arrives a moment after the connection; wait for it.
-      pending = device
-      batteryWait.restart()
+      // Devices connecting within that window join a queue instead of
+      // overwriting each other in the single pending slot.
+      queue.push(device)
+      if (!batteryWait.running) batteryWait.restart()
     } else {
       island.showHud({
         key: "device",
@@ -42,27 +44,38 @@ Item {
     }
   }
 
-  property var pending: null
+  property var queue: []
 
   Timer {
     id: batteryWait
     interval: 1200
-    onTriggered: {
-      var device = devices.pending
-      devices.pending = null
-      if (!device || !device.connected) return
-      var battery = device.batteryAvailable ? devices.batteryFraction(device) : -1
-      island.showHud({
-        key: "device",
-        layout: "label",
-        label: String(device.name || device.deviceName || "Bluetooth device"),
-        icon: Model.deviceGlyph(device.icon),
-        valueText: battery >= 0 ? Math.round(battery * 100) + "%" : "Connected",
-        color: battery >= 0 && battery <= 0.2 ? island.urgentColor : island.greenColor,
-        duration: 3000
-      })
+    onTriggered: devices.flush()
+  }
+
+  // Show one queued connect per pass; the HUD is a single slot, so the
+  // next device goes up right after the current one's duration expires.
+  // Devices that disconnected while waiting are skipped.
+  function flush() {
+    var device = queue.shift()
+    while (device && !device.connected) device = queue.shift()
+    if (!device) return
+    var battery = device.batteryAvailable ? devices.batteryFraction(device) : -1
+    island.showHud({
+      key: "device",
+      layout: "label",
+      label: String(device.name || device.deviceName || "Bluetooth device"),
+      icon: Model.deviceGlyph(device.icon),
+      valueText: battery >= 0 ? Math.round(battery * 100) + "%" : "Connected",
+      color: battery >= 0 && battery <= 0.2 ? island.urgentColor : island.greenColor,
+      duration: 3000
+    })
+    if (queue.length > 0) {
+      nextFlush.interval = 3200
+      nextFlush.restart()
     }
   }
+
+  Timer { id: nextFlush; onTriggered: devices.flush() }
 
   Instantiator {
     model: devices.list

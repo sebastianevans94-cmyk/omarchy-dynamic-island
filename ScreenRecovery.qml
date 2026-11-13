@@ -14,16 +14,32 @@ Item {
   visible: false
 
   function recover() {
+    // A compositor can close the surface repeatedly while an output is
+    // settling (onClosed → recover → remap → close …). The first few
+    // retries settle in 200 ms; after that each settle backs off to 2 s,
+    // so churn cannot turn into a tight remap loop. recoveryCount decays
+    // over the period decayTimer so a healthy screen returns to fast.
+    recoveryCount++
     remapping = true
+    settleTimer.interval = recoveryCount > 5 ? 2000 : 200
     settleTimer.restart()
   }
+
+  property int recoveryCount: 0
 
   onTargetScreenChanged: recover()
 
   Timer {
     id: settleTimer
-    interval: 200
     onTriggered: root.remapping = false
+  }
+
+  Timer {
+    id: decayTimer
+    interval: 30000
+    repeat: true
+    running: root.recoveryCount > 0
+    onTriggered: root.recoveryCount = Math.max(0, root.recoveryCount - 1)
   }
 
   Connections {

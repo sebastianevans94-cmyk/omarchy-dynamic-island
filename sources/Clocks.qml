@@ -124,14 +124,27 @@ Item {
 
   // ---- persistence
   property bool restored: false
+  // Writes landing before the restore completes must not vanish: they are
+  // re-flushed once restore has finished (the last call wins, which is the
+  // most recent state anyway).
+  property bool savePending: false
 
   function save() {
-    if (!restored) return
+    if (!restored) { savePending = true; return }
     stateFile.setText(JSON.stringify({
       timerEnd: timerEnd, timerLeftPaused: timerLeftPaused, timerTotal: timerTotal,
       timerPaused: timerPaused, timerLabel: timerLabel,
       stopwatchStart: stopwatchStart, stopwatchBanked: stopwatchBanked, stopwatchRunning: stopwatchRunning
     }) + "\n")
+  }
+
+  // Quickshell's FileView does not create missing parent directories: the
+  // state dir is created here, not left to whichever sibling happens to
+  // mkdir it first.
+  readonly property string stateDirPath: statePath.slice(0, statePath.lastIndexOf("/"))
+  Process {
+    id: stateDir
+    command: ["mkdir", "-p", clocks.stateDirPath]
   }
 
   FileView {
@@ -155,7 +168,13 @@ Item {
       clocks.stopwatchRunning = s.stopwatchRunning === true
       // Ran out while the shell was down: ring now.
       if (clocks.timerEnd > 0 && !clocks.timerPaused && clocks.timerEnd <= clocks.now) clocks.timerFinished()
+      if (clocks.savePending) clocks.save()
     }
-    onLoadFailed: clocks.restored = true
+    onLoadFailed: {
+      clocks.restored = true
+      if (clocks.savePending) clocks.save()
+    }
   }
+
+  Component.onCompleted: stateDir.running = true
 }

@@ -96,7 +96,8 @@ Item {
     x: view.pad
     y: recordingRow.y + recordingRow.height + island.s(12)
     width: parent.width - view.pad * 2
-    height: 1
+    // On the device grid: a bare 1 lands between pixels at fractional dpr.
+    height: island.snap(1)
     color: Util.alpha(island.fg, 0.1)
   }
 

@@ -36,7 +36,7 @@ Item {
       font.family: island.fontFamily
       font.pixelSize: island.f(34)
       font.weight: Font.Light
-      font.letterSpacing: -1
+      font.letterSpacing: -island.ls(1)
       font.features: { "tnum": 1 }
       color: view.tone
     }
@@ -81,6 +81,7 @@ Item {
       MouseArea {
         id: pp
         anchors.fill: parent
+        hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: view.timer ? view.clocks.toggleTimer() : view.clocks.toggleStopwatch()
       }

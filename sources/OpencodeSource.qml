@@ -34,7 +34,7 @@ Item {
   Timer {
     interval: 12000
     repeat: true
-    running: opencode.on
+    running: opencode.on && !(opencode.island && opencode.island.fullscreenOnTarget)
     triggeredOnStart: true
     onTriggered: if (!listProc.running) listProc.running = true
   }
@@ -72,7 +72,7 @@ Item {
       printErrors: false
 
       onLoaded: opencode.absorb(providerId, text())
-      onFileChanged: if (opencode.on) this.reload()
+      onFileChanged: if (opencode.on) reload()
       // A failed read (file rewritten mid-flight, briefly missing) leaves
       // the provider's last GOOD record standing, rather than blanking the
       // lane. One more is never forced: the next write heals it.
@@ -110,7 +110,7 @@ Item {
   Timer {
     interval: opencode.probeSeconds * 1000
     repeat: true
-    running: opencode.on
+    running: opencode.on && !(opencode.island && opencode.island.fullscreenOnTarget)
     triggeredOnStart: true
     onTriggered: if (!presenceProbe.running) presenceProbe.running = true
   }

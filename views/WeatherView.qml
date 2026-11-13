@@ -173,7 +173,8 @@ Item {
     x: view.pad - view.island.s(6)
     y: view.island.s(144)
     width: parent.width - (view.pad - view.island.s(6)) * 2
-    height: 1
+    // On the device grid: a bare 1 lands between pixels at fractional dpr.
+    height: view.island.snap(1)
     color: Util.alpha(view.island.fg, 0.14)
   }
 
