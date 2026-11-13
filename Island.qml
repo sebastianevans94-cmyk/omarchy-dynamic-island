@@ -1508,26 +1508,28 @@ Item {
   }
   property var themeNames: []
   function cycleTheme() {
-    var proceed = function() {
+    // The canonical list (`omarchy theme list`) covers every theme on the
+    // system — user themes AND the stock set in /usr/share/omarchy/themes —
+    // and is re-read each cycle, so a theme installed since the last one is
+    // included. The old user-dir-only scan missed 22 stock themes.
+    var proceed = function(names) {
       runShell(["omarchy", "theme", "current"], function(out) {
         var cur = slugify(out.trim())
         var idx = -1
-        for (var i = 0; i < themeNames.length; i++)
-          if (slugify(themeNames[i]) === cur) idx = i
-        var next = (idx < 0 ? 0 : (idx + 1) % themeNames.length)
-        var name = themeNames[next]
+        for (var i = 0; i < names.length; i++)
+          if (slugify(names[i]) === cur) idx = i
+        var next = (idx < 0 ? 0 : (idx + 1) % names.length)
+        var name = names[next]
         runShell(["omarchy", "theme", "set", name])
         showHud({ layout: "label", label: name, icon: "󰏘", color: accentColor, duration: 1800 })
       })
     }
-    if (themeNames.length === 0) {
-      runShell(["bash", "-c", "find '" + Quickshell.env("HOME") + "/.config/omarchy/themes' -maxdepth 1 -mindepth 1 -type d -printf '%f\\n' | sort"], function(out) {
-        themeNames = out.split("\n").filter(function(s) { return s.trim() !== "" })
-        proceed()
-      })
-      return
-    }
-    proceed()
+    runShell(["omarchy", "theme", "list"], function(out) {
+      var names = out.split("\n").filter(function(s) { return s.trim() !== "" })
+      if (names.length === 0) return
+      themeNames = names
+      proceed(names)
+    })
   }
   function islandClicked(button) {
     if (button === Qt.RightButton) { islandDismiss(); return }
