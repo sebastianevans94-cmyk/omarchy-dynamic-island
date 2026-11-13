@@ -1352,11 +1352,20 @@ Item {
       var needed = Math.ceil((hudLabelMetrics.advanceWidth + hudValueMetrics.advanceWidth + s(58)) / unit)
       return { w: Math.min(500, Math.max(v.w, needed)), h: v.h, r: v.r }
     }
+    if (view === "idle-expanded" && idleExpandedHeight > v.h) {
+      // The expanded panel grows to its chained content when the fonts run
+      // taller than the designed height (fontScale > spacing scale), so
+      // rows can never overlap — the view reports what it actually needs.
+      return { w: v.w, h: idleExpandedHeight, r: v.r }
+    }
     return v
   }
   // Optional sideways trim: the pill drifts this many px right (negative
   // for left) while everything it grows into follows along.
   readonly property int xShift: s(Number(setting("xShift", 0)) || 0)
+  // The expanded idle panel's measured height (IdleExpanded reports it):
+  // the panel grows to fit its chained rows instead of clipping them.
+  property real idleExpandedHeight: 0
   function slotSize(name) { return snugSize(name, Model.sizeFor(name, viewCounts, notchSize)) }
 
   function showHud(next) {

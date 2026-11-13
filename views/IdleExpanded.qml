@@ -14,6 +14,17 @@ Item {
   readonly property int pad: island.s(26)
   readonly property var nextEvent: island.calendar.next
 
+  // What the chained rows actually occupy: the island grows the panel to
+  // this when it exceeds the designed height, so content is never clipped
+  // and rows never overlap. Depends only on content metrics, never on the
+  // panel's own size — no sizing loop.
+  readonly property real bottomEdge: bottomRow.y + bottomRow.height + pad
+  Binding {
+    target: view.island
+    property: "idleExpandedHeight"
+    value: view.bottomEdge
+  }
+
   // The quick-settings chips of the bottom row: the power-profile chip
   // first — icons only, so it reads at a glance: the daemon's current
   // profile glyph, and on a battery device the charge glyph beside it
@@ -221,13 +232,20 @@ Item {
     color: view.nextEvent ? island.accentColor : island.fgDim
   }
 
+  // The tallest edge above the media row: the weather chip when shown (it
+  // spans the whole clock row), else the date line. Rows chain from this,
+  // so any growth — larger fonts, an extra line in the chip — reflows
+  // downward instead of overlapping the row below it.
+  readonly property real clockRowBottom: weatherChip.visible
+    ? weatherChip.y + weatherChip.height : dateLine.y + dateLine.height
+
   // Now playing, full width below the clock row — while something is live.
   // Clicking anywhere on it opens the player pane.
   Rectangle {
     id: mediaRow
     visible: island.mediaActivity && island.hasMedia
     x: view.pad
-    y: island.s(80)
+    y: view.clockRowBottom + island.s(12)
     width: parent.width - view.pad * 2
     // Fit the f()-scaled transport buttons: an s()-only height breaks when
     // fontScale exceeds the spacing scale (buttons poke out of the capsule).
@@ -320,8 +338,11 @@ Item {
   // right edge. (Floating bubbles are retired; everything is a persistent
   // button on this panel now.)
   Item {
+    id: bottomRow
     x: view.pad
-    y: island.s(114)
+    // Chains from the media row when it shows (else from its slot), so the
+    // bottom row follows whatever sits above it.
+    y: (mediaRow.visible ? mediaRow.y + mediaRow.height : mediaRow.y) + island.s(12)
     width: parent.width - view.pad * 2
     height: island.s(26)
 
